@@ -1,6 +1,7 @@
 # Python-generated files
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
 build/
 dist/
 wheels/
@@ -10,6 +11,17 @@ wheels/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Notebooks and logs
+.ipynb_checkpoints/
+*.log
+
+# Editor and OS local files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.tmp
 
 # Virtual environments
 .venv

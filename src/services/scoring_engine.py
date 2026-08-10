@@ -1,65 +1,114 @@
 from datetime import datetime
-from dateutil import parser
-from src.config import SKILLS_MATCH_WEIGHT, SKILL_TENURE_WEIGHT, WORK_EXPERIENCE_WEIGHT
-from src.schemas.agent_outputs import JobRequirementsOutput, CVSkillMatchOutput, OverallExperienceOutput
+from typing import Optional
+
+from src.config import (
+    SKILLS_MATCH_WEIGHT,
+    SKILL_TENURE_WEIGHT,
+    WORK_EXPERIENCE_WEIGHT,
+)
+from src.schemas.experience import OverallExperienceOutput, SkillTenureOutput
+from src.schemas.requirements import SkillMatchResult
+from src.schemas.scoring import Scorecard
+
 
 class RelevanceScoringEngine:
     def __init__(self):
         self.weights = {
             "skills_match": SKILLS_MATCH_WEIGHT,
             "skill_tenure": SKILL_TENURE_WEIGHT,
-            "work_exp": WORK_EXPERIENCE_WEIGHT,
+            "work_experience": WORK_EXPERIENCE_WEIGHT,
         }
+        if abs(sum(self.weights.values()) - 1.0) > 1e-9:
+            raise ValueError("Scoring weights must add up to 1.0")
 
     @staticmethod
-    def calculate_duration_in_years(start_str: str, end_str: str) -> float:
-        try:
-            start = parser.parse(start_str.strip())
-            end_clean = end_str.strip().lower()
-            end = datetime.now() if end_clean in ["present", "current", "now"] else parser.parse(end_clean)
-            days = (end - start).days
-            return max(round(days / 365.25, 2), 0.0)
-        except (ValueError, TypeError):
+    def calculate_duration_in_years(
+        start_date: Optional[str], end_date: Optional[str]
+    ) -> float:
+        if not start_date or not end_date:
             return 0.0
+        try:
+            start = datetime.strptime(start_date.strip(), "%Y-%m")
+            end_text = end_date.strip()
+            end = (
+                datetime.now()
+                if end_text.lower() in {"present", "current", "now"}
+                else datetime.strptime(end_text, "%Y-%m")
+            )
+        except (TypeError, ValueError):
+            return 0.0
+        return max(round((end - start).days / 365.25, 2), 0.0)
 
-    def calculate_scorecard(self, pipeline_output: dict) -> dict:
-        job_reqs: JobRequirementsOutput = pipeline_output["job_requirements"]
-        matched_cv: CVSkillMatchOutput = pipeline_output["matched_skills"]
-        overall_exp: OverallExperienceOutput = pipeline_output["overall_experience"]
+    def calculate_scorecard(
+        self,
+        skills_result: SkillMatchResult,
+        skill_tenure: SkillTenureOutput,
+        overall_experience: OverallExperienceOutput,
+    ) -> Scorecard:
+        skills_match_score = skills_result.match_percentage
 
-        # Pillar A: Skills Match
-        target_dict = {req.skill_name.lower(): req.target_years for req in job_reqs.required_skills}
-        total_job_skills = len(target_dict)
-        valid_matches = [s for s in matched_cv.matched_skills if s.skill_name.lower() in target_dict]
-        total_found = len(valid_matches)
-        skills_match_score = (total_found / total_job_skills * 100) if total_job_skills > 0 else 0.0
-
-        # Pillar B: Skill Tenure
         tenure_scores = []
-        for skill in valid_matches:
-            target_yrs = max(target_dict.get(skill.skill_name.lower(), 1.0), 0.1)
-            candidate_yrs = self.calculate_duration_in_years(skill.start_date, skill.end_date)
-            tenure_scores.append(min((candidate_yrs / target_yrs) * 100, 100.0))
-        skill_tenure_score = (sum(tenure_scores) / len(tenure_scores)) if tenure_scores else 0.0
+        for skill in skill_tenure.skills:
+            target_years = max(skill.target_years, 0.1)
+            candidate_years = self.calculate_duration_in_years(
+                skill.start_date, skill.end_date
+            )
+            tenure_scores.append(min(candidate_years / target_years * 100, 100.0))
+        skill_tenure_score = (
+            sum(tenure_scores) / len(tenure_scores) if tenure_scores else 0.0
+        )
+        skill_tenure_applicable = bool(tenure_scores)
 
-        # Pillar C: Overall Tenure
-        relevant_roles = [r for r in overall_exp.candidate_roles if r.is_relevant]
-        total_career_years = sum([self.calculate_duration_in_years(r.start_date, r.end_date) for r in relevant_roles])
-        target_career_years = max(overall_exp.target_overall_years, 0.1)
-        work_exp_score = min((total_career_years / target_career_years) * 100, 100.0)
-
-        # Final Score
-        final_relevance = (
-            (self.weights["skills_match"] * skills_match_score)
-            + (self.weights["skill_tenure"] * skill_tenure_score)
-            + (self.weights["work_exp"] * work_exp_score)
+        relevant_roles = [
+            role for role in overall_experience.candidate_roles if role.is_relevant
+        ]
+        total_career_years = sum(
+            self.calculate_duration_in_years(role.start_date, role.end_date)
+            for role in relevant_roles
+        )
+        target_career_years = max(overall_experience.target_overall_years, 0.1)
+        work_experience_score = min(
+            total_career_years / target_career_years * 100, 100.0
         )
 
-        return {
-            "final_relevance": round(final_relevance, 1),
-            "pillar_a": {"score": round(skills_match_score, 1), "raw": f"{total_found}/{total_job_skills} skills"},
-            "pillar_b": {"score": round(skill_tenure_score, 1), "raw": f"Avg tenure fit across {total_found} tools"},
-            "pillar_c": {"score": round(work_exp_score, 1), "raw": f"{round(total_career_years, 1)} yrs vs {target_career_years} yrs required"},
-            "validated_skills": [s.skill_name for s in valid_matches],
-            "counted_roles": [r.role_title for r in relevant_roles],
-        }
+        weighted_score = (
+            self.weights["skills_match"] * skills_match_score
+            + self.weights["work_experience"] * work_experience_score
+        )
+        active_weight = (
+            self.weights["skills_match"] + self.weights["work_experience"]
+        )
+        if skill_tenure_applicable:
+            weighted_score += self.weights["skill_tenure"] * skill_tenure_score
+            active_weight += self.weights["skill_tenure"]
+        final_relevance = weighted_score / active_weight
+        return Scorecard(
+            final_relevance=round(final_relevance, 1),
+            pillar_a={
+                "score": round(skills_match_score, 1),
+                "raw": (
+                    f"{skills_result.total_matched_skills}/"
+                    f"{skills_result.total_job_requirements} skills"
+                ),
+            },
+            pillar_b={
+                "score": round(skill_tenure_score, 1),
+                "raw": (
+                    (
+                        "Average commercial tenure fit across "
+                        f"{len(tenure_scores)} explicit requirements"
+                    )
+                    if skill_tenure_applicable
+                    else "No explicit commercial-tenure requirements"
+                ),
+                "applicable": skill_tenure_applicable,
+            },
+            pillar_c={
+                "score": round(work_experience_score, 1),
+                "raw": (
+                    f"{round(total_career_years, 1)} years vs "
+                    f"{target_career_years} years required"
+                ),
+            },
+            counted_roles=[role.role_title for role in relevant_roles],
+        )
