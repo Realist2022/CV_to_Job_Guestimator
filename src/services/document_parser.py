@@ -1,6 +1,53 @@
 import re
+import io
+import contextlib
 from typing import Sequence, List
 from src.schemas.pii import TextSpan
+
+
+class PDFTextExtractionError(RuntimeError):
+    pass
+
+
+def _clean_pdf_text(text: str) -> str:
+    text = (text or "").replace("\u00a0", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _extract_with_pypdf(path: str) -> str:
+    from pypdf import PdfReader
+
+    with contextlib.redirect_stderr(io.StringIO()):
+        reader = PdfReader(path)
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def _extract_with_pymupdf(path: str) -> str:
+    import fitz
+
+    fitz.TOOLS.mupdf_display_errors(False)
+    fitz.TOOLS.mupdf_display_warnings(False)
+    with contextlib.redirect_stderr(io.StringIO()):
+        with fitz.open(path) as document:
+            return "\n".join(page.get_text() for page in document)
+
+
+def _extract_with_ocr(path: str) -> str:
+    import fitz
+    import pytesseract
+    from PIL import Image
+
+    fitz.TOOLS.mupdf_display_errors(False)
+    fitz.TOOLS.mupdf_display_warnings(False)
+    text_pages = []
+    with contextlib.redirect_stderr(io.StringIO()):
+        with fitz.open(path) as document:
+            for page in document:
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+                text_pages.append(pytesseract.image_to_string(image))
+    return "\n".join(text_pages)
 
 
 def normalise(text: str) -> str:
@@ -14,13 +61,30 @@ class SourceDocument:
 
     @classmethod
     def from_pdf(cls, path: str) -> "SourceDocument":
-        from pypdf import PdfReader
+        failures = []
+        extractors = (
+            ("pypdf", _extract_with_pypdf),
+            ("pymupdf", _extract_with_pymupdf),
+            ("ocr", _extract_with_ocr),
+        )
+        for name, extractor in extractors:
+            try:
+                raw = extractor(path)
+            except Exception as exc:
+                failures.append(f"{name}: {type(exc).__name__}: {exc}")
+                continue
 
-        reader = PdfReader(path)
-        raw = "\n".join(page.extract_text() or "" for page in reader.pages)
-        raw = raw.replace("\u00a0", " ")
-        raw = re.sub(r"[ \t]+", " ", raw)
-        return cls(re.sub(r"\n{3,}", "\n\n", raw).strip())
+            cleaned = _clean_pdf_text(raw)
+            if normalise(cleaned):
+                return cls(cleaned)
+            failures.append(f"{name}: extracted no text")
+
+        detail = "; ".join(failures)
+        raise PDFTextExtractionError(
+            f"Could not extract readable text from PDF '{path}'. {detail}. "
+            "If this is a scanned or image-only PDF, install Tesseract OCR and make "
+            "sure tesseract.exe is available on PATH, or re-export the PDF with selectable text."
+        )
 
     def contains(self, snippet: str) -> bool:
         needle = normalise(snippet)

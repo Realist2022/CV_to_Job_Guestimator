@@ -1,5 +1,11 @@
 import os
-from src.services import JobListing, CandidateCV, InstructorClient, ExtractionPipeline
+from src.services import (
+    JobListing,
+    CandidateCV,
+    InstructorClient,
+    ExtractionPipeline,
+    PDFTextExtractionError,
+)
 from src.utils import ArtifactLogger
 from src.config import (
     MODEL_NAME,
@@ -37,11 +43,15 @@ def main():
     )
     pipeline = ExtractionPipeline(client, pii_client=pii_client)
 
+    try:
+        listing = JobListing.from_pdf(job_pdf)
+        cv = CandidateCV.from_pdf(cv_pdf)
+    except PDFTextExtractionError as exc:
+        print(f"Error: {exc}")
+        return
+
     # Execute pipeline
-    pipeline_data = pipeline.run(
-        JobListing.from_pdf(job_pdf),
-        CandidateCV.from_pdf(cv_pdf)
-    )
+    pipeline_data = pipeline.run(listing, cv)
 
     skills_eval = pipeline_data.skills_eval
     skill_tenure = pipeline_data.skill_tenure

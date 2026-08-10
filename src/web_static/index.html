@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CV to Job Guestimator</title>
+  <style>
+    :root {
+      --ink: #18201d;
+      --muted: #5e6a64;
+      --line: #cdd7cf;
+      --paper: #fbfaf5;
+      --panel: #ffffff;
+      --field: #f3f6f1;
+      --accent: #1f7a5a;
+      --accent-strong: #135f46;
+      --warning: #b7502a;
+      --shadow: 0 18px 45px rgba(38, 55, 47, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: "Aptos", "Segoe UI", sans-serif;
+      background:
+        linear-gradient(120deg, rgba(31, 122, 90, 0.12), transparent 36%),
+        radial-gradient(circle at 85% 12%, rgba(190, 110, 52, 0.13), transparent 28%),
+        var(--paper);
+    }
+
+    main {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 48px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 28px;
+      align-items: end;
+      padding: 24px 0 30px;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 760px;
+      font-size: clamp(2rem, 5vw, 4.8rem);
+      line-height: 0.95;
+      font-weight: 780;
+    }
+
+    header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.02rem;
+      line-height: 1.55;
+    }
+
+    .upload-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .dropzone {
+      position: relative;
+      min-height: 230px;
+      display: grid;
+      align-content: center;
+      gap: 12px;
+      padding: 28px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 2px dashed var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+    }
+
+    .dropzone:hover,
+    .dropzone.dragover {
+      border-color: var(--accent);
+      background: var(--panel);
+      transform: translateY(-2px);
+    }
+
+    .dropzone input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .eyebrow {
+      color: var(--accent-strong);
+      font-size: 0.8rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .dropzone h2 {
+      margin: 0;
+      font-size: 1.55rem;
+      line-height: 1.1;
+    }
+
+    .filename {
+      min-height: 26px;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin: 22px 0 28px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 14px 20px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.56;
+    }
+
+    .status {
+      color: var(--muted);
+      min-height: 24px;
+    }
+
+    .status.error { color: var(--warning); }
+
+    .results {
+      display: none;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .results.visible { display: grid; }
+
+    .score-panel,
+    .detail-panel {
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(205, 215, 207, 0.8);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .score-panel { padding: 24px; }
+
+    .score {
+      font-size: 4.4rem;
+      font-weight: 800;
+      line-height: 1;
+      margin: 8px 0 18px;
+    }
+
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 13px 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .metric strong { color: var(--ink); }
+
+    .detail-panel { overflow: hidden; }
+
+    .tabs {
+      display: flex;
+      gap: 2px;
+      padding: 8px;
+      background: var(--field);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .tab {
+      background: transparent;
+      color: var(--muted);
+      padding: 10px 14px;
+    }
+
+    .tab.active {
+      background: var(--panel);
+      color: var(--ink);
+    }
+
+    .tab-content { padding: 22px; }
+
+    .list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .item {
+      padding: 13px 14px;
+      background: var(--field);
+      border: 1px solid rgba(205, 215, 207, 0.8);
+      border-radius: 6px;
+    }
+
+    .item-title {
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .item-note {
+      margin-top: 5px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    @media (max-width: 820px) {
+      header,
+      .upload-grid,
+      .results {
+        grid-template-columns: 1fr;
+      }
+
+      .score { font-size: 3.5rem; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>CV to Job Guestimator</h1>
+      <p>Drop a job listing and candidate CV, then run the same multi-agent compare pipeline used by the local CLI.</p>
+    </header>
+
+    <section class="upload-grid" aria-label="Document uploads">
+      <label class="dropzone" data-zone="job">
+        <input id="jobFile" type="file" accept=".pdf,.txt,application/pdf,text/plain">
+        <span class="eyebrow">Job listing</span>
+        <h2>Drop PDF or TXT</h2>
+        <span class="filename" id="jobName">No file selected</span>
+      </label>
+
+      <label class="dropzone" data-zone="cv">
+        <input id="cvFile" type="file" accept=".pdf,.txt,application/pdf,text/plain">
+        <span class="eyebrow">Candidate CV</span>
+        <h2>Drop PDF or TXT</h2>
+        <span class="filename" id="cvName">No file selected</span>
+      </label>
+    </section>
+
+    <section class="actions" aria-label="Compare controls">
+      <button id="compareButton" disabled>Compare</button>
+      <span class="status" id="status">Choose both files to begin.</span>
+    </section>
+
+    <section class="results" id="results" aria-live="polite">
+      <aside class="score-panel">
+        <span class="eyebrow">Overall match</span>
+        <div class="score" id="overallScore">0%</div>
+        <div class="metric"><span>Skills</span><strong id="skillsScore">0%</strong></div>
+        <div class="metric"><span>Skill tenure</span><strong id="tenureScore">N/A</strong></div>
+        <div class="metric"><span>Career</span><strong id="careerScore">0%</strong></div>
+      </aside>
+
+      <section class="detail-panel">
+        <nav class="tabs" aria-label="Result sections">
+          <button class="tab active" data-tab="requirements">Requirements</button>
+          <button class="tab" data-tab="missing">Missing</button>
+          <button class="tab" data-tab="experience">Experience</button>
+        </nav>
+        <div class="tab-content" id="tabContent"></div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const jobFile = document.querySelector('#jobFile');
+    const cvFile = document.querySelector('#cvFile');
+    const jobName = document.querySelector('#jobName');
+    const cvName = document.querySelector('#cvName');
+    const button = document.querySelector('#compareButton');
+    const statusEl = document.querySelector('#status');
+    const results = document.querySelector('#results');
+    const tabContent = document.querySelector('#tabContent');
+    const tabs = document.querySelectorAll('.tab');
+    let latestResult = null;
+
+    for (const input of [jobFile, cvFile]) {
+      input.addEventListener('change', updateFileState);
+      const zone = input.closest('.dropzone');
+      zone.addEventListener('dragenter', () => zone.classList.add('dragover'));
+      zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+      zone.addEventListener('drop', () => zone.classList.remove('dragover'));
+    }
+
+    button.addEventListener('click', compare);
+    tabs.forEach(tab => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
+
+    function updateFileState() {
+      jobName.textContent = jobFile.files[0]?.name || 'No file selected';
+      cvName.textContent = cvFile.files[0]?.name || 'No file selected';
+      button.disabled = !(jobFile.files[0] && cvFile.files[0]);
+      statusEl.textContent = button.disabled ? 'Choose both files to begin.' : 'Ready to compare.';
+      statusEl.classList.remove('error');
+    }
+
+    async function compare() {
+      const formData = new FormData();
+      formData.append('job_listing', jobFile.files[0]);
+      formData.append('candidate_cv', cvFile.files[0]);
+      button.disabled = true;
+      statusEl.textContent = 'Running compare...';
+      statusEl.classList.remove('error');
+
+      try {
+        const response = await fetch('/api/compare', { method: 'POST', body: formData });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || 'Compare failed.');
+        latestResult = payload;
+        renderSummary(payload);
+        selectTab('requirements');
+        results.classList.add('visible');
+        statusEl.textContent = `Compared in ${payload.execution_seconds}s using ${payload.engine}.`;
+      } catch (error) {
+        statusEl.textContent = error.message;
+        statusEl.classList.add('error');
+      } finally {
+        button.disabled = !(jobFile.files[0] && cvFile.files[0]);
+      }
+    }
+
+    function renderSummary(data) {
+      document.querySelector('#overallScore').textContent = `${data.scorecard.final_relevance}%`;
+      document.querySelector('#skillsScore').textContent = `${data.scorecard.pillar_a.score}%`;
+      document.querySelector('#tenureScore').textContent = data.scorecard.pillar_b.applicable ? `${data.scorecard.pillar_b.score}%` : 'N/A';
+      document.querySelector('#careerScore').textContent = `${data.scorecard.pillar_c.score}%`;
+    }
+
+    function selectTab(name) {
+      tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.tab === name));
+      if (!latestResult) return;
+      if (name === 'requirements') renderRequirements();
+      if (name === 'missing') renderMissing();
+      if (name === 'experience') renderExperience();
+    }
+
+    function renderRequirements() {
+      const items = latestResult.skills_evaluation.job_requirements.map(requirement => {
+        const tenure = requirement.minimum_commercial_years ? `${requirement.minimum_commercial_years}+ commercial years` : 'No explicit tenure';
+        return item(requirement.capability, tenure);
+      });
+      tabContent.innerHTML = list(items, 'No requirements extracted.');
+    }
+
+    function renderMissing() {
+      const items = latestResult.skills_evaluation.missing_cv_skills.map(skill => item(skill, 'Not evidenced in the CV.'));
+      tabContent.innerHTML = list(items, 'No missing skills.');
+    }
+
+    function renderExperience() {
+      const items = latestResult.overall_experience.candidate_roles.map(role => {
+        const decision = role.is_relevant ? 'Relevant' : 'Not relevant';
+        return item(`${role.role_title} (${role.start_date} to ${role.end_date})`, `${decision}: ${role.match_rationale}`);
+      });
+      tabContent.innerHTML = list(items, 'No dated roles extracted.');
+    }
+
+    function list(items, emptyText) {
+      return items.length ? `<ul class="list">${items.join('')}</ul>` : `<div class="item">${escapeHtml(emptyText)}</div>`;
+    }
+
+    function item(title, note) {
+      return `<li class="item"><div class="item-title">${escapeHtml(title)}</div><div class="item-note">${escapeHtml(note)}</div></li>`;
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+    }
+  </script>
+</body>
+</html>
