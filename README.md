@@ -1,6 +1,6 @@
 # CV to Job Guestimator
 
-CV to Job Guestimator is a local Python pipeline that compares a candidate CV against a job listing and produces a structured relevance score. It extracts text from two PDFs, redacts candidate PII, sends the extracted content through a structured multi-agent LLM pipeline, calculates a weighted scorecard, and writes a JSON trace of each run.
+CV to Job Guestimator is a local Python pipeline and web UI that compares a candidate CV against a job listing and produces a structured relevance score. It extracts text from uploaded PDFs or TXT files, redacts candidate PII, sends the extracted content through a structured multi-agent LLM pipeline, calculates a weighted scorecard, and writes a JSON trace of each run.
 
 The project is designed for local experimentation with CV/job matching logic. Candidate CVs, job listing PDFs, environment files, and generated artifacts should stay out of Git because they may contain personal or sensitive information.
 
@@ -31,7 +31,7 @@ PDF inputs
 				|
 				v
 SourceDocument.from_pdf
-	Extracts PDF text with pypdf
+	Extracts PDF text with pypdf, falls back to PyMuPDF, then OCR
 				|
 				v
 ExtractionPipeline
@@ -54,6 +54,8 @@ ArtifactLogger
 	Writes artifacts/run-000001_<engine>_<timestamp>_<run-id>.json
 ```
 
+The web UI wraps the same pipeline with a drag-and-drop upload page and a `/api/compare` endpoint.
+
 ### Entry Point
 
 `main.py` orchestrates the full run:
@@ -71,7 +73,7 @@ ArtifactLogger
 | Module | Responsibility |
 | --- | --- |
 | `src/config.py` | Loads model configuration and scoring weights. |
-| `src/services/document_parser.py` | Defines source document types and extracts text from PDF files using `pypdf`. |
+| `src/services/document_parser.py` | Defines source document types and extracts text from PDF files using `pypdf`, PyMuPDF fallback, and OCR fallback. |
 | `src/services/llm_client.py` | Wraps the OpenAI-compatible client with Instructor for structured Pydantic outputs. |
 | `src/services/agents.py` | Implements the PII, requirement extraction, skill matching, overall experience, and skill tenure agents. |
 | `src/services/pii_detector.py` | Combines regex and model-based PII detection before CV text reaches evaluation agents. |
@@ -85,6 +87,8 @@ ArtifactLogger
 | `src/schemas/artifact.py` | Defines the saved run artifact format. |
 | `src/services/scoring_engine.py` | Converts structured outputs into the weighted relevance scorecard. |
 | `src/utils/artifact_logger.py` | Serializes each run to a timestamped JSON file. |
+| `src/web_app.py` | Serves the drag-and-drop web UI and compare upload API. |
+| `src/web_static/index.html` | Browser UI for uploading a job listing and CV, running comparison, and viewing results. |
 
 ## Model Configuration
 
@@ -115,6 +119,14 @@ Install dependencies with uv:
 ```powershell
 uv sync
 ```
+
+For scanned, image-only, or malformed PDFs, install Tesseract OCR and make sure `tesseract.exe` is available on `PATH`. On Windows, install Tesseract from the official UB Mannheim Windows builds or another trusted package source, then open a new terminal and verify:
+
+```powershell
+tesseract --version
+```
+
+The parser first tries embedded PDF text extraction. OCR is only used when text extraction returns nothing.
 
 If you are using the default local Ollama setup, make sure Ollama is running and the configured model is available before executing the pipeline.
 
@@ -153,6 +165,27 @@ Career Match:  <score>% (<candidate years> years vs <target years> years require
 ```
 
 Each run also writes a numbered, timestamped JSON file to `artifacts/`, such as `run-000001_llama3.2_latest_20260810T002103.083290Z_1a7c4409.json`. That folder is ignored by Git because artifacts may include extracted candidate/job data and model outputs.
+
+## Running the Web UI
+
+Start the local web server from the repository root:
+
+```powershell
+uv run uvicorn src.web_app:app --reload
+```
+
+Open the printed local URL, usually:
+
+```text
+http://127.0.0.1:8000
+```
+
+The page accepts one job listing and one candidate CV. Each upload can be either:
+
+- `.pdf` for normal PDF upload.
+- `.txt` for pasted or pre-extracted text, which is useful when a job site produces a visually readable PDF that automated PDF libraries cannot extract.
+
+The compare endpoint writes the same artifact JSON files under `artifacts/` as the CLI.
 
 ## Scoring Logic
 

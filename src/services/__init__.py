@@ -1,4 +1,4 @@
-from .document_parser import JobListing, CandidateCV
+from .document_parser import JobListing, CandidateCV, PDFTextExtractionError
 from .llm_client import InstructorClient
 from .agents import (
     JobRequirementsAgent,
@@ -13,6 +13,7 @@ from .scoring_engine import RelevanceScoringEngine
 __all__ = [
     "JobListing",
     "CandidateCV",
+    "PDFTextExtractionError",
     "InstructorClient",
     "JobRequirementsAgent",
     "SkillMatcherAgent",
