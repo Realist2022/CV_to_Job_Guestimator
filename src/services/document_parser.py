@@ -1,32 +1,73 @@
-import fitz  # PyMuPDF
-import logging
+import re
+from typing import Sequence, List
+from src.schemas.pii import TextSpan
 
-logger = logging.getLogger(__name__)
 
-class DocumentParser:
-    @staticmethod
-    def extract_text_from_pdf(pdf_path: str) -> str:
-        """
-        Extracts all text from a given PDF file using PyMuPDF.
-        Assumes the PDF is cleanly encoded.
-        """
-        try:
-            doc = fitz.open(pdf_path)
-            extracted_text = []
-            
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                text = page.get_text("text")
-                if text:
-                    extracted_text.append(text)
-                
-            doc.close()
-            final_text = "\n".join(extracted_text).strip()
-            
-            if not final_text:
-                logger.warning(f"Warning: Extracted text from {pdf_path} is empty. The PDF may be corrupted or image-based.")
-                
-            return final_text
-            
-        except Exception as e:
-            raise IOError(f"Failed to read PDF at {pdf_path}: {e}")
+def normalise(text: str) -> str:
+    return re.sub(r"[\s\u00a0]+", " ", text or "").strip().lower()
+
+
+class SourceDocument:
+    def __init__(self, text: str):
+        self.text = text
+        self._normalised = normalise(text)
+
+    @classmethod
+    def from_pdf(cls, path: str) -> "SourceDocument":
+        from pypdf import PdfReader
+
+        reader = PdfReader(path)
+        raw = "\n".join(page.extract_text() or "" for page in reader.pages)
+        raw = raw.replace("\u00a0", " ")
+        raw = re.sub(r"[ \t]+", " ", raw)
+        return cls(re.sub(r"\n{3,}", "\n\n", raw).strip())
+
+    def contains(self, snippet: str) -> bool:
+        needle = normalise(snippet)
+        return bool(needle) and needle in self._normalised
+
+    def __len__(self) -> int:
+        return len(self.text)
+
+
+class JobListing(SourceDocument):
+    REQUIREMENTS_HEADING = re.compile(
+        r"^\s*(?:required|requirements|qualifications|key requirements|about you|"
+        r"what you.ll need|skills? (?:and|&) experience|required qualifications.*|"
+        r"essential)\b.*$", re.I | re.M,
+    )
+    STOP_HEADING = re.compile(
+        r"^\s*(?:how to apply|apply now|benefits|what we offer|"
+        r"about (?:us|the school|the company)|remuneration|salary)\b.*$", re.I | re.M,
+    )
+
+    @property
+    def requirements_section(self) -> str:
+        start = self.REQUIREMENTS_HEADING.search(self.text)
+        if not start:
+            return self.text
+        stop = self.STOP_HEADING.search(self.text, start.end())
+        section = self.text[start.start():stop.start() if stop else len(self.text)]
+        return section if len(section) > 120 else self.text
+
+
+class CandidateCV(SourceDocument):
+    REDACTION_TOKEN = "[{kind}]"
+
+    def redacted(self, spans: Sequence[TextSpan]) -> "CandidateCV":
+        result = self.text
+        for span in sorted(spans, key=lambda s: len(s.text), reverse=True):
+            if span.text.strip():
+                result = re.sub(
+                    re.escape(span.text),
+                    self.REDACTION_TOKEN.format(kind=span.kind.upper()),
+                    result, flags=re.IGNORECASE,
+                )
+        return CandidateCV(result)
+
+    def residual_fragments(self, spans: Sequence[TextSpan]) -> List[str]:
+        leaks = {
+            token for span in spans for token in span.text.split()
+            if len(token) > 3 and token.lower() in self._normalised
+        }
+        return sorted(leaks)
