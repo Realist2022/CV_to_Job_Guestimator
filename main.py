@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from src.services import (
     JobListing,
     CandidateCV,
@@ -18,11 +19,17 @@ from src.config import (
 
 
 def main():
-    job_pdf = os.path.join("dataSet", "tradeMeJobListing", "Job_listing.pdf")
-    cv_pdf = os.path.join("dataSet", "tradeMeCV", "Sonny H Tapara CV.pdf")
+    job_path = _first_existing_path(
+        os.path.join("dataSet", "tradeMeJobListing", "Job_listing.txt"),
+        os.path.join("dataSet", "tradeMeJobListing", "Job_listing.pdf"),
+    )
+    cv_path = _first_existing_path(
+        os.path.join("dataSet", "tradeMeCV", "Sonny H Tapara CV.txt"),
+        os.path.join("dataSet", "tradeMeCV", "Sonny H Tapara CV.pdf"),
+    )
 
-    if not os.path.exists(job_pdf) or not os.path.exists(cv_pdf):
-        print("Error: Target PDF files not found. Please verify your dataSet paths.")
+    if not job_path or not cv_path:
+        print("Error: Target document files not found. Please verify your dataSet paths.")
         return
 
     print(
@@ -44,9 +51,9 @@ def main():
     pipeline = ExtractionPipeline(client, pii_client=pii_client)
 
     try:
-        listing = JobListing.from_pdf(job_pdf)
-        cv = CandidateCV.from_pdf(cv_pdf)
-    except PDFTextExtractionError as exc:
+        listing = _load_job_listing(job_path)
+        cv = CandidateCV.from_path(cv_path)
+    except (PDFTextExtractionError, ValueError) as exc:
         print(f"Error: {exc}")
         return
 
@@ -54,7 +61,6 @@ def main():
     pipeline_data = pipeline.run(listing, cv)
 
     skills_eval = pipeline_data.skills_eval
-    skill_tenure = pipeline_data.skill_tenure
     overall_experience = pipeline_data.overall_experience
     scorecard = pipeline_data.scorecard
 
@@ -64,11 +70,10 @@ def main():
     print("-" * 66)
     print(f"Overall Match: {scorecard.final_relevance}%")
     print(f"Skills Match:  {scorecard.pillar_a.score}% ({scorecard.pillar_a.raw})")
-    tenure_score = (
+    career_score = (
         f"{scorecard.pillar_b.score}%" if scorecard.pillar_b.applicable else "N/A"
     )
-    print(f"Skill Tenure:  {tenure_score} ({scorecard.pillar_b.raw})")
-    print(f"Career Match:  {scorecard.pillar_c.score}% ({scorecard.pillar_c.raw})")
+    print(f"Career Match:  {career_score} ({scorecard.pillar_b.raw})")
 
     print("\nAGENT 1 OUTPUT: PII DETECTOR")
     print("-" * 66)
@@ -78,12 +83,7 @@ def main():
     print("-" * 66)
     print(f"Requirements extracted: {skills_eval.total_job_requirements}")
     for requirement in skills_eval.job_requirements:
-        tenure = (
-            f" ({requirement.minimum_commercial_years:g}+ commercial years)"
-            if requirement.minimum_commercial_years is not None
-            else ""
-        )
-        print(f"  - {requirement.capability}{tenure}")
+        print(f"  - {requirement.skill_name}")
 
     print("\nAGENT 3 OUTPUT: SKILL MATCHER")
     print("-" * 66)
@@ -107,17 +107,6 @@ def main():
         print(f"  Decision:  {relevance}")
         print(f"  Rationale: {role.match_rationale}")
         print()
-
-    print("AGENT 5 OUTPUT: SKILL TENURE")
-    print("-" * 66)
-    for tenure in skill_tenure.skills:
-        skill_name = skills_eval.job_requirements[tenure.requirement_id].capability
-        date_range = f"{tenure.start_date or 'Unknown'} to {tenure.end_date or 'Unknown'}"
-        print(f"Skill:         {skill_name}")
-        print(f"Target tenure: {tenure.target_years} years")
-        print(f"CV date range: {date_range}")
-        print(f"Evidence:      {tenure.evidence}")
-        print()
     print("=" * 66)
 
     # Log artifact trace
@@ -125,6 +114,19 @@ def main():
     saved_file = logger.log_run(pipeline_data)
 
     print(f"\nRun #{logger.last_run_number:06d} artifact saved to: {saved_file}\n")
+
+
+def _first_existing_path(*paths: str) -> str | None:
+    for path in paths:
+        if Path(path).exists():
+            return path
+    return None
+
+
+def _load_job_listing(path: str) -> JobListing:
+    if Path(path).suffix.lower() == ".pdf":
+        return JobListing.from_pdf(path, cache_text=True)
+    return JobListing.from_path(path)
 
 
 if __name__ == "__main__":

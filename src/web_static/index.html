@@ -121,6 +121,41 @@
       margin: 22px 0 28px;
     }
 
+    .weight-panel {
+      display: grid;
+      gap: 12px;
+      margin: 18px 0 0;
+      padding: 18px 20px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid rgba(205, 215, 207, 0.8);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .weight-header,
+    .weight-values {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .weight-header strong {
+      font-size: 1.05rem;
+    }
+
+    .weight-values {
+      color: var(--muted);
+      font-size: 0.96rem;
+    }
+
+    .weight-values strong { color: var(--ink); }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
     button {
       border: 0;
       border-radius: 6px;
@@ -264,6 +299,18 @@
       </label>
     </section>
 
+    <section class="weight-panel" aria-label="Scoring weights">
+      <div class="weight-header">
+        <span class="eyebrow">Scoring weights</span>
+        <strong id="weightSummary">60% skills / 40% career</strong>
+      </div>
+      <input id="skillsWeight" type="range" min="0" max="100" value="60" step="5" aria-label="Skills match importance">
+      <div class="weight-values">
+        <span>Skills <strong id="skillsWeightValue">60%</strong></span>
+        <span>Career <strong id="careerWeightValue">40%</strong></span>
+      </div>
+    </section>
+
     <section class="actions" aria-label="Compare controls">
       <button id="compareButton" disabled>Compare</button>
       <span class="status" id="status">Choose both files to begin.</span>
@@ -274,7 +321,6 @@
         <span class="eyebrow">Overall match</span>
         <div class="score" id="overallScore">0%</div>
         <div class="metric"><span>Skills</span><strong id="skillsScore">0%</strong></div>
-        <div class="metric"><span>Skill tenure</span><strong id="tenureScore">N/A</strong></div>
         <div class="metric"><span>Career</span><strong id="careerScore">0%</strong></div>
       </aside>
 
@@ -295,6 +341,10 @@
     const jobName = document.querySelector('#jobName');
     const cvName = document.querySelector('#cvName');
     const button = document.querySelector('#compareButton');
+    const skillsWeight = document.querySelector('#skillsWeight');
+    const skillsWeightValue = document.querySelector('#skillsWeightValue');
+    const careerWeightValue = document.querySelector('#careerWeightValue');
+    const weightSummary = document.querySelector('#weightSummary');
     const statusEl = document.querySelector('#status');
     const results = document.querySelector('#results');
     const tabContent = document.querySelector('#tabContent');
@@ -310,7 +360,9 @@
     }
 
     button.addEventListener('click', compare);
+  skillsWeight.addEventListener('input', updateWeightState);
     tabs.forEach(tab => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
+  updateWeightState();
 
     function updateFileState() {
       jobName.textContent = jobFile.files[0]?.name || 'No file selected';
@@ -324,6 +376,8 @@
       const formData = new FormData();
       formData.append('job_listing', jobFile.files[0]);
       formData.append('candidate_cv', cvFile.files[0]);
+      formData.append('skills_weight', String(Number(skillsWeight.value) / 100));
+      formData.append('work_experience_weight', String((100 - Number(skillsWeight.value)) / 100));
       button.disabled = true;
       statusEl.textContent = 'Running compare...';
       statusEl.classList.remove('error');
@@ -348,8 +402,15 @@
     function renderSummary(data) {
       document.querySelector('#overallScore').textContent = `${data.scorecard.final_relevance}%`;
       document.querySelector('#skillsScore').textContent = `${data.scorecard.pillar_a.score}%`;
-      document.querySelector('#tenureScore').textContent = data.scorecard.pillar_b.applicable ? `${data.scorecard.pillar_b.score}%` : 'N/A';
-      document.querySelector('#careerScore').textContent = `${data.scorecard.pillar_c.score}%`;
+      document.querySelector('#careerScore').textContent = data.scorecard.pillar_b.applicable ? `${data.scorecard.pillar_b.score}%` : 'N/A';
+    }
+
+    function updateWeightState() {
+      const skills = Number(skillsWeight.value);
+      const career = 100 - skills;
+      skillsWeightValue.textContent = `${skills}%`;
+      careerWeightValue.textContent = `${career}%`;
+      weightSummary.textContent = `${skills}% skills / ${career}% career`;
     }
 
     function selectTab(name) {
@@ -362,8 +423,7 @@
 
     function renderRequirements() {
       const items = latestResult.skills_evaluation.job_requirements.map(requirement => {
-        const tenure = requirement.minimum_commercial_years ? `${requirement.minimum_commercial_years}+ commercial years` : 'No explicit tenure';
-        return item(requirement.capability, tenure);
+        return item(requirement.skill_name, 'Required capability.');
       });
       tabContent.innerHTML = list(items, 'No requirements extracted.');
     }

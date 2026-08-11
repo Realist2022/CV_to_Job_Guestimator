@@ -5,7 +5,6 @@ from .agents import (
     OverallExperienceAgent,
     PIIAgent,
     SkillMatcherAgent,
-    SkillTenureAgent,
 )
 from .pipeline import ExtractionPipeline
 from .scoring_engine import RelevanceScoringEngine
@@ -17,7 +16,6 @@ __all__ = [
     "InstructorClient",
     "JobRequirementsAgent",
     "SkillMatcherAgent",
-    "SkillTenureAgent",
     "OverallExperienceAgent",
     "PIIAgent",
     "ExtractionPipeline",

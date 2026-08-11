@@ -2,7 +2,7 @@ import instructor
 from openai import OpenAI
 from pydantic import BaseModel
 from typing import Type, Any
-from src.config import MODEL_NAME, MODEL_BASE_URL, MODEL_API_KEY
+from src.config import MODEL_NAME, MODEL_BASE_URL, MODEL_API_KEY, MODEL_TEMPERATURE
 
 
 class InstructorClient:
@@ -36,5 +36,5 @@ class InstructorClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.0,
+            temperature=MODEL_TEMPERATURE,
         )

@@ -9,16 +9,15 @@ The project is designed for local experimentation with CV/job matching logic. Ca
 The pipeline answers three questions:
 
 1. What technical requirements does the job listing ask for?
-2. Which of those requirements appear in the candidate CV, and for what time period?
+2. Which of those requirements appear in the candidate CV?
 3. How much relevant overall career experience does the CV show for the target role?
 
-Those outputs are combined into a final relevance percentage using three weighted pillars:
+Those outputs are combined into a final relevance percentage using two weighted pillars:
 
 | Pillar | Weight | Source |
 | --- | ---: | --- |
-| Skills match | 45% | Required skills found in the CV |
-| Skill tenure | 35% | Candidate years against required years for matched skills |
-| Overall tenure | 20% | Relevant career years against target experience |
+| Skills match | 70% | Required skills found in the CV |
+| Career match | 30% | Relevant career years against target experience |
 
 The default weights live in `src/config.py`.
 
@@ -39,7 +38,6 @@ ExtractionPipeline
 	Step 2: Extract authoritative job requirements
 	Step 3: Match requirements against the redacted CV
 	Step 4: Extract relevant career history
-	Step 5: Measure tenure for explicit commercial-year requirements
 				|
 				v
 Pydantic schemas
@@ -63,7 +61,7 @@ The web UI wraps the same pipeline with a drag-and-drop upload page and a `/api/
 1. Builds the expected local PDF paths.
 2. Extracts text with `JobListing.from_pdf()` and `CandidateCV.from_pdf()`.
 3. Creates separate Instructor-backed clients for PII detection and evaluation.
-4. Runs the five-step extraction pipeline.
+4. Runs the four-step extraction pipeline.
 5. Computes the final relevance report.
 6. Saves a JSON artifact under `artifacts/`.
 7. Prints a readable score summary and agent outputs to the terminal.
@@ -75,13 +73,13 @@ The web UI wraps the same pipeline with a drag-and-drop upload page and a `/api/
 | `src/config.py` | Loads model configuration and scoring weights. |
 | `src/services/document_parser.py` | Defines source document types and extracts text from PDF files using `pypdf`, PyMuPDF fallback, and OCR fallback. |
 | `src/services/llm_client.py` | Wraps the OpenAI-compatible client with Instructor for structured Pydantic outputs. |
-| `src/services/agents.py` | Implements the PII, requirement extraction, skill matching, overall experience, and skill tenure agents. |
+| `src/services/agents.py` | Implements the PII, requirement extraction, skill matching, and overall experience agents. |
 | `src/services/pii_detector.py` | Combines regex and model-based PII detection before CV text reaches evaluation agents. |
 | `src/services/pipeline.py` | Orchestrates the end-to-end extraction, redaction, scoring, and pipeline result assembly. |
 | `src/prompts/templates.py` | Stores the system prompts for each agent step. |
 | `src/schemas/pii.py` | Defines PII span schemas. |
 | `src/schemas/requirements.py` | Defines job requirement, skill evaluation, and skill match result schemas. |
-| `src/schemas/experience.py` | Defines overall experience and skill tenure schemas. |
+| `src/schemas/experience.py` | Defines overall experience schemas. |
 | `src/schemas/scoring.py` | Defines scorecard schemas. |
 | `src/schemas/pipeline.py` | Defines pipeline result and metrics schemas. |
 | `src/schemas/artifact.py` | Defines the saved run artifact format. |
@@ -132,17 +130,21 @@ If you are using the default local Ollama setup, make sure Ollama is running and
 
 ## Input Files
 
-The current entry point expects local PDFs in these folders:
+The current entry point expects local documents in these folders:
 
 ```text
 dataSet/
 	tradeMeJobListing/
-		Job_listing.pdf
+		Job_listing.txt   # preferred when present
+		Job_listing.pdf   # used when no TXT file exists
 	tradeMeCV/
-		<candidate-cv>.pdf
+		<candidate-cv>.txt # preferred when present
+		<candidate-cv>.pdf # used when no TXT file exists
 ```
 
 The exact CV filename is currently hardcoded in `main.py`. If you want to run the pipeline against different documents frequently, a future improvement should move these paths into command-line arguments or environment variables.
+
+TXT files bypass PDF parsing and OCR entirely. This is useful for job listings from sites that export malformed, scanned, or otherwise non-selectable PDFs: copy the listing text into `Job_listing.txt` and run the CLI normally.
 
 The `dataSet/` folder is ignored by Git because it can contain CVs, job descriptions, and other private source documents.
 
@@ -160,8 +162,7 @@ A successful run prints a report like:
 SCORING ENGINE OUTPUT
 Overall Match: <score>%
 Skills Match:  <score>% (<matched>/<total> skills)
-Skill Tenure:  <score-or-N/A> (...)
-Career Match:  <score>% (<candidate years> years vs <target years> years required)
+Career Match:  <score-or-N/A> (<candidate years> years vs <target years> years required)
 ```
 
 Each run also writes a numbered, timestamped JSON file to `artifacts/`, such as `run-000001_llama3.2_latest_20260810T002103.083290Z_1a7c4409.json`. That folder is ignored by Git because artifacts may include extracted candidate/job data and model outputs.
@@ -192,15 +193,14 @@ The compare endpoint writes the same artifact JSON files under `artifacts/` as t
 The score is calculated in `RelevanceScoringEngine`:
 
 1. Skills match score: matched required skills divided by total extracted job requirements.
-2. Skill tenure score: average of candidate years divided by target years for each matched skill, capped at 100% per skill.
-3. Overall tenure score: relevant career years divided by required overall years, capped at 100%.
-4. Final relevance: weighted sum of the three pillar scores.
+2. Career match score: relevant career years divided by required overall years, capped at 100%.
+3. Final relevance: weighted sum of the applicable pillar scores.
 
 Date ranges are expected in `YYYY-MM` format. Values such as `Present`, `Current`, and `Now` are treated as the current date.
 
 ## Tests
 
-The test suite covers artifact logging, pipeline privacy/redaction behavior, requirement scoring, and skill tenure calculations. Run it from an environment that has `pytest` installed:
+The test suite covers artifact logging, pipeline privacy/redaction behavior, requirement scoring, document parsing, and the web API. Run it from an environment that has `pytest` installed:
 
 ```powershell
 uv run pytest
@@ -253,7 +253,7 @@ The repository is configured to ignore:
 |   |-- test_artifact_logger.py
 |   |-- test_pipeline_privacy.py
 |   |-- test_requirement_scoring.py
-|   `-- test_skill_tenure.py
+|   `-- test_web_app.py
 |-- dataSet/       # Local only, ignored by Git
 `-- artifacts/     # Generated, ignored by Git
 ```

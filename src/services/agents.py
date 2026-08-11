@@ -3,10 +3,8 @@ import re
 from typing import List, Optional, Type
 from pydantic import create_model, model_validator
 from src.schemas.experience import (
+    OverallExperienceResponse,
     OverallExperienceOutput,
-    SkillTenureEvidenceOutput,
-    SkillTenureRecord,
-    SkillTenureOutput,
 )
 from src.schemas.pii import PIIOutput
 from src.schemas.requirements import (
@@ -20,19 +18,12 @@ from src.prompts.templates import (
     OVERALL_EXPERIENCE_SYSTEM_PROMPT,
     PII_SYSTEM_PROMPT,
     SKILL_MATCHER_SYSTEM_PROMPT,
-    SKILL_TENURE_SYSTEM_PROMPT,
 )
 from src.services.document_parser import JobListing, CandidateCV
 from src.services.llm_client import InstructorClient
 
 
-_YEARS_PATTERN = re.compile(
-    r"(?P<minimum>\d+(?:\.\d+)?)\s*"
-    r"(?:(?:-|–|—|to)\s*\d+(?:\.\d+)?)?\s*\+?\s*years?\b",
-    re.IGNORECASE,
-)
-
-_CAPABILITY_ALIASES = {
+_skill_name_ALIASES = {
     "react": ("react", "react.js", "reactjs"),
     "node.js": ("node.js", "nodejs", "node js"),
     "javascript or typescript": ("javascript", "typescript"),
@@ -41,28 +32,91 @@ _CAPABILITY_ALIASES = {
     "git": ("git",),
 }
 
+_EXPERIENCE_ROLE_BLOCK_PATTERN = re.compile(
+    r"(?P<header>[^\n]+?)\s*[•*]\s*"
+    r"(?P<start>[A-Za-z]+\s+\d{4}|\d{4}-\d{2})\s*"
+    r"(?:-|–|—|to)\s*"
+    r"(?P<end>Present|Current|Now|[A-Za-z]+\s+\d{4}|\d{4}-\d{2})"
+    r"(?P<body>.*?)(?=\n\s*[^\n]+?\s*[•*]\s*"
+    r"(?:[A-Za-z]+\s+\d{4}|\d{4}-\d{2})\s*(?:-|–|—|to)|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+_ROLE_LINE_PATTERN = re.compile(r"^\s*Role:\s*(?P<title>.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
-def _aliases_for(capability: str) -> tuple[str, ...]:
-    return _CAPABILITY_ALIASES.get(capability.strip().casefold(), (capability,))
+
+def _aliases_for(skill_name: str) -> tuple[str, ...]:
+    return _skill_name_ALIASES.get(skill_name.strip().casefold(), (skill_name,))
 
 
-def _contains_capability(text: str, capability: str) -> bool:
+def _contains_skill_name(text: str, skill_name: str) -> bool:
     return any(
         re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text, re.IGNORECASE)
-        for alias in _aliases_for(capability)
+        for alias in _aliases_for(skill_name)
     )
 
 
-def _source_commercial_years(capability: str, source: str) -> Optional[float]:
-    for line in source.splitlines():
-        if "commercial" not in line.casefold():
+def _normalize_title(value: str) -> set[str]:
+    words = re.findall(r"[a-z0-9]+", value.casefold())
+    return {word for word in words if word not in {"and", "full", "stack", "developer"}}
+
+
+def _role_titles_overlap(left: str, right: str) -> bool:
+    left_words = _normalize_title(left)
+    right_words = _normalize_title(right)
+    return bool(left_words and right_words and left_words & right_words)
+
+
+def _explicit_cv_role_dates(cv_text: str) -> list[dict[str, str]]:
+    role_dates = []
+    for match in _EXPERIENCE_ROLE_BLOCK_PATTERN.finditer(cv_text):
+        role_line = _ROLE_LINE_PATTERN.search(match.group("body"))
+        if role_line is None:
             continue
-        if not _contains_capability(line, capability):
+        role_dates.append(
+            {
+                "title": role_line.group("title"),
+                "start_date": match.group("start"),
+                "end_date": match.group("end"),
+            }
+        )
+    return role_dates
+
+
+def _backfill_overall_experience_dates(
+    overall_experience: OverallExperienceOutput, cv_text: str
+) -> OverallExperienceOutput:
+    explicit_role_dates = _explicit_cv_role_dates(cv_text)
+    if not explicit_role_dates:
+        return overall_experience
+
+    candidate_roles = []
+    for role in overall_experience.candidate_roles:
+        if role.start_date and role.end_date:
+            candidate_roles.append(role)
             continue
-        match = _YEARS_PATTERN.search(line)
-        if match:
-            return float(match.group("minimum"))
-    return None
+
+        matching_dates = next(
+            (
+                role_dates
+                for role_dates in explicit_role_dates
+                if _role_titles_overlap(role.role_title, role_dates["title"])
+            ),
+            None,
+        )
+        if matching_dates is None:
+            candidate_roles.append(role)
+            continue
+
+        candidate_roles.append(
+            role.model_copy(
+                update={
+                    "start_date": role.start_date or matching_dates["start_date"],
+                    "end_date": role.end_date or matching_dates["end_date"],
+                }
+            )
+        )
+
+    return overall_experience.model_copy(update={"candidate_roles": candidate_roles})
 
 
 def _constrained_evaluation_model(
@@ -91,44 +145,6 @@ def _constrained_evaluation_model(
     )
 
 
-def _constrained_tenure_evidence_model(
-    requirement_ids: set[int], role_count: int
-) -> Type[SkillTenureEvidenceOutput]:
-    expected_ids = requirement_ids
-
-    def validate_tenure_coverage(self: SkillTenureEvidenceOutput):
-        received_ids = [skill.requirement_id for skill in self.skills]
-        if len(received_ids) != len(set(received_ids)):
-            raise ValueError("Skill tenure output contained duplicate requirement IDs")
-        if set(received_ids) != expected_ids:
-            raise ValueError(
-                f"Skill tenure output must contain exactly these requirement IDs: {sorted(expected_ids)}"
-            )
-        for skill in self.skills:
-            if len(skill.role_ids) != len(set(skill.role_ids)):
-                raise ValueError("Skill tenure output contained duplicate role IDs")
-            invalid_role_ids = [
-                role_id
-                for role_id in skill.role_ids
-                if role_id < 0 or role_id >= role_count
-            ]
-            if invalid_role_ids:
-                raise ValueError(
-                    f"Skill tenure output contained invalid role IDs: {invalid_role_ids}"
-                )
-        return self
-
-    return create_model(
-        "ConstrainedSkillTenureEvidenceOutput",
-        __base__=SkillTenureEvidenceOutput,
-        __validators__={
-            "validate_tenure_coverage": model_validator(mode="after")(
-                validate_tenure_coverage
-            )
-        },
-    )
-
-
 class JobRequirementsAgent:
     """Extracts the authoritative requirement list from a job description."""
 
@@ -146,18 +162,7 @@ class JobRequirementsAgent:
         )
         if result is None:
             return None
-
-        grounded_requirements = []
-        for requirement in result.job_requirements:
-            source_years = _source_commercial_years(
-                requirement.capability, listing.requirements_section
-            )
-            grounded_requirements.append(
-                requirement.model_copy(
-                    update={"minimum_commercial_years": source_years}
-                )
-            )
-        return JobRequirementsOutput(job_requirements=grounded_requirements)
+        return result
 
 
 class SkillMatcherAgent:
@@ -176,7 +181,7 @@ class SkillMatcherAgent:
             [
                 {
                     "requirement_id": requirement_id,
-                    "capability": requirement.capability,
+                    "skill_name": requirement.skill_name,
                 }
                 for requirement_id, requirement in enumerate(job_requirements)
             ],
@@ -199,15 +204,15 @@ class SkillMatcherAgent:
         matched_ids.update(
             requirement_id
             for requirement_id, requirement in enumerate(job_requirements)
-            if _contains_capability(cv.text, requirement.capability)
+            if _contains_skill_name(cv.text, requirement.skill_name)
         )
         matched_skills = [
-            requirement.capability
+            requirement.skill_name
             for requirement_id, requirement in enumerate(job_requirements)
             if requirement_id in matched_ids
         ]
         missing_skills = [
-            requirement.capability
+            requirement.skill_name
             for requirement_id, requirement in enumerate(job_requirements)
             if requirement_id not in matched_ids
         ]
@@ -220,121 +225,6 @@ class SkillMatcherAgent:
             missing_cv_skills=missing_skills,
             rationale=rationale,
         )
-
-
-class SkillTenureAgent:
-    """Measures required and evidenced tenure for matched requirements."""
-
-    system_prompt = SKILL_TENURE_SYSTEM_PROMPT
-
-    def __init__(self, client: InstructorClient):
-        self.client = client
-
-    def run(
-        self,
-        job_requirements: List[JobRequirement],
-        overall_experience: OverallExperienceOutput,
-        cv: CandidateCV,
-    ) -> Optional[SkillTenureOutput]:
-        roles = overall_experience.candidate_roles
-        commercial_requirements = [
-            (requirement_id, requirement)
-            for requirement_id, requirement in enumerate(job_requirements)
-            if requirement.minimum_commercial_years is not None
-        ]
-        requirement_ids = {
-            requirement_id for requirement_id, _ in commercial_requirements
-        }
-        response_model = _constrained_tenure_evidence_model(
-            requirement_ids, len(roles)
-        )
-        requirements = json.dumps(
-            [
-                {
-                    "requirement_id": requirement_id,
-                    "capability": requirement.capability,
-                    "minimum_commercial_years": requirement.minimum_commercial_years,
-                }
-                for requirement_id, requirement in commercial_requirements
-            ],
-            ensure_ascii=False,
-        )
-        dated_roles = json.dumps(
-            [
-                {
-                    "role_id": role_id,
-                    "role_title": role.role_title,
-                    "start_date": role.start_date,
-                    "end_date": role.end_date,
-                    "relevance_rationale": role.match_rationale,
-                }
-                for role_id, role in enumerate(roles)
-            ],
-            ensure_ascii=False,
-        )
-        user_message = (
-            f"COMMERCIAL TENURE REQUIREMENTS:\n{requirements}"
-            f"\n\nDATED CV ROLES:\n{dated_roles}"
-            f"\n\nCANDIDATE CV:\n{cv.text}"
-        )
-        evidence_output = self.client.complete(
-            system_prompt=self.system_prompt,
-            user_prompt=user_message,
-            response_model=response_model,
-        )
-        if evidence_output is None:
-            return None
-
-        evidence_by_requirement = {
-            skill.requirement_id: skill for skill in evidence_output.skills
-        }
-        tenure_records = []
-        for requirement_id, requirement in commercial_requirements:
-            evidence = evidence_by_requirement[requirement_id]
-            referenced_roles = [
-                roles[role_id]
-                for role_id in evidence.role_ids
-                if _contains_capability(
-                    " ".join(
-                        (
-                            roles[role_id].role_title,
-                            roles[role_id].match_rationale,
-                            evidence.evidence,
-                        )
-                    ),
-                    requirement.capability,
-                )
-            ]
-            start_date = (
-                min(role.start_date for role in referenced_roles)
-                if referenced_roles
-                else None
-            )
-            if not referenced_roles:
-                end_date = None
-            elif any(
-                role.end_date.lower() in {"present", "current", "now"}
-                for role in referenced_roles
-            ):
-                end_date = "Present"
-            else:
-                end_date = max(role.end_date for role in referenced_roles)
-
-            tenure_records.append(
-                SkillTenureRecord(
-                    requirement_id=requirement_id,
-                    target_years=requirement.minimum_commercial_years,
-                    start_date=start_date,
-                    end_date=end_date,
-                    evidence=(
-                        evidence.evidence
-                        if referenced_roles
-                        else "No dated role-specific evidence."
-                    ),
-                )
-            )
-
-        return SkillTenureOutput(skills=tenure_records)
 
 
 class OverallExperienceAgent:
@@ -351,11 +241,16 @@ class OverallExperienceAgent:
         user_message = (
             f"JOB DESCRIPTION:\n{listing.text}\n\nCANDIDATE CV:\n{cv.text}"
         )
-        return self.client.complete(
+        result = self.client.complete(
             system_prompt=self.system_prompt,
             user_prompt=user_message,
-            response_model=OverallExperienceOutput,
+            response_model=OverallExperienceResponse,
         )
+        if result is None:
+            return None
+        if isinstance(result, OverallExperienceOutput):
+            return _backfill_overall_experience_dates(result, cv.text)
+        return _backfill_overall_experience_dates(result.overall_experience, cv.text)
 
 
 class PIIAgent:

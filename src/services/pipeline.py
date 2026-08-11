@@ -1,6 +1,5 @@
 import time
 from typing import Optional
-from src.schemas.experience import SkillTenureOutput
 from src.schemas.pipeline import PipelineMetrics, PipelineResult
 from src.schemas.requirements import SkillMatchResult
 from src.services.document_parser import CandidateCV, JobListing
@@ -10,7 +9,6 @@ from src.services.agents import (
     OverallExperienceAgent,
     PIIAgent,
     SkillMatcherAgent,
-    SkillTenureAgent,
 )
 from src.services.pii_detector import (
     PIIDetector,
@@ -28,13 +26,13 @@ class ExtractionPipeline:
         client: InstructorClient,
         pii_detector: Optional[PIIDetector] = None,
         pii_client: Optional[InstructorClient] = None,
+        scoring_engine: Optional[RelevanceScoringEngine] = None,
     ):
         self.client = client
         self.job_requirements_agent = JobRequirementsAgent(client)
         self.skill_matcher_agent = SkillMatcherAgent(client)
-        self.skill_tenure_agent = SkillTenureAgent(client)
         self.overall_experience_agent = OverallExperienceAgent(client)
-        self.scoring_engine = RelevanceScoringEngine()
+        self.scoring_engine = scoring_engine or RelevanceScoringEngine()
         self.pii_client = pii_client or InstructorClient(
             model=PII_MODEL_NAME,
             base_url=PII_MODEL_BASE_URL,
@@ -95,26 +93,8 @@ class ExtractionPipeline:
         if overall_experience is None:
             raise RuntimeError("Overall experience extraction failed.")
 
-        # STEP 5: Associate matched requirements with the extracted dated roles
-        if verbose:
-            print(" -> [5/5] Measuring tenure for matched requirements...")
-        if any(
-            requirement.minimum_commercial_years is not None
-            for requirement in skills_result.job_requirements
-        ):
-            skill_tenure = self.skill_tenure_agent.run(
-                job_requirements=skills_result.job_requirements,
-                overall_experience=overall_experience,
-                cv=redacted_cv,
-            )
-            if skill_tenure is None:
-                raise RuntimeError("Skill tenure extraction failed.")
-        else:
-            skill_tenure = SkillTenureOutput(skills=[])
-
         scorecard = self.scoring_engine.calculate_scorecard(
             skills_result,
-            skill_tenure,
             overall_experience,
         )
 
@@ -125,7 +105,6 @@ class ExtractionPipeline:
             pii_engine=self.pii_client.model,
             execution_seconds=execution_seconds,
             skills_eval=skills_result,
-            skill_tenure=skill_tenure,
             overall_experience=overall_experience,
             scorecard=scorecard,
             metrics=PipelineMetrics(

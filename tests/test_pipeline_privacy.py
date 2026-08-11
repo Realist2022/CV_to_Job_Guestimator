@@ -5,12 +5,13 @@ from src.prompts.templates import (
     OVERALL_EXPERIENCE_SYSTEM_PROMPT,
     PII_SYSTEM_PROMPT,
     SKILL_MATCHER_SYSTEM_PROMPT,
-    SKILL_TENURE_SYSTEM_PROMPT,
 )
 from src.schemas.experience import OverallExperienceOutput
 from src.schemas.pii import PIIOutput
 from src.schemas.requirements import JobRequirementsOutput
+from src.services.agents import PIIAgent
 from src.services.document_parser import CandidateCV, JobListing
+from src.services.pii_detector import ModelPIIDetector
 from src.services.pipeline import ExtractionPipeline
 
 
@@ -47,21 +48,10 @@ class ExtractionPipelinePrivacyTest(unittest.TestCase):
             "gemini-3.1-flash-lite",
             {
                 JOB_REQUIREMENTS_SYSTEM_PROMPT: JobRequirementsOutput(
-                    job_requirements=[
-                        {"capability": "Python", "minimum_commercial_years": 1.0}
-                    ]
+                    job_requirements=[{"skill_name": "Python"}]
                 ),
                 SKILL_MATCHER_SYSTEM_PROMPT: lambda model: model(
                     evaluations=[{"requirement_id": 0, "matched": True}]
-                ),
-                SKILL_TENURE_SYSTEM_PROMPT: lambda model: model(
-                    skills=[
-                        {
-                            "requirement_id": 0,
-                            "role_ids": [0],
-                            "evidence": "Python developer",
-                        }
-                    ]
                 ),
                 OVERALL_EXPERIENCE_SYSTEM_PROMPT: OverallExperienceOutput(
                     target_job_title="Python Developer",
@@ -95,7 +85,7 @@ class ExtractionPipelinePrivacyTest(unittest.TestCase):
         self.assertEqual(result.pii_engine, "llama3.2:latest")
         self.assertEqual(result.engine, "gemini-3.1-flash-lite")
         self.assertEqual(result.scorecard.final_relevance, 100.0)
-        self.assertFalse(result.scorecard.pillar_b.applicable)
+        self.assertTrue(result.scorecard.pillar_b.applicable)
         self.assertEqual(len(evaluation_client.requests), 3)
 
     def test_local_pii_failure_prevents_cloud_requests(self):
@@ -116,6 +106,44 @@ class ExtractionPipelinePrivacyTest(unittest.TestCase):
             )
 
         self.assertEqual(evaluation_client.requests, [])
+
+    def test_model_pii_guard_keeps_employer_and_employment_dates(self):
+        pii_client = RecordingClient(
+            "llama3.2:latest",
+            {
+                PII_SYSTEM_PROMPT: PIIOutput(
+                    spans=[
+                        {
+                            "kind": "other_identifier",
+                            "text": "FOODSTUFFS · July 2025 – October 2025",
+                        },
+                        {"kind": "other_identifier", "text": "Email: jane@example.com"},
+                    ]
+                )
+            },
+        )
+        detector = ModelPIIDetector(PIIAgent(pii_client))
+
+        spans = detector.detect(
+            CandidateCV(
+                "Experience\n"
+                "FOODSTUFFS · July 2025 – October 2025\n"
+                "Role: Software Engineer\n"
+                "Email: jane@example.com"
+            )
+        )
+
+        self.assertEqual([span.text for span in spans], ["Email: jane@example.com"])
+        self.assertEqual(
+            detector.rejections,
+            [
+                {
+                    "reason": "validation_guard_rejected",
+                    "kind": "other_identifier",
+                    "text": "FOODSTUFFS · July 2025 – October 2025",
+                }
+            ],
+        )
 
 
 if __name__ == "__main__":

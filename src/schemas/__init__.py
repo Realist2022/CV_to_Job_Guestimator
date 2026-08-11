@@ -1,10 +1,6 @@
 from .artifact import ArtifactMetadata, RunArtifact
 from .experience import (
     OverallExperienceOutput,
-    SkillTenureEvidenceOutput,
-    SkillTenureEvidenceRecord,
-    SkillTenureOutput,
-    SkillTenureRecord,
     WorkRole,
 )
 from .pipeline import PipelineMetrics, PipelineResult
@@ -31,10 +27,6 @@ __all__ = [
     "PIIKind",
     "TextSpan",
     "OverallExperienceOutput",
-    "SkillTenureEvidenceOutput",
-    "SkillTenureEvidenceRecord",
-    "SkillTenureOutput",
-    "SkillTenureRecord",
     "WorkRole",
     "ArtifactMetadata",
     "RunArtifact",

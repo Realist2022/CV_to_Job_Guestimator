@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from src.schemas.artifact import RunArtifact
-from src.schemas.experience import OverallExperienceOutput, SkillTenureOutput
+from src.schemas.experience import OverallExperienceOutput
 from src.schemas.pipeline import PipelineMetrics, PipelineResult
 from src.schemas.pii import TextSpan
 from src.schemas.requirements import SkillMatchResult
@@ -19,21 +19,10 @@ def make_pipeline_result() -> PipelineResult:
         pii_engine="local-pii:latest",
         execution_seconds=1.25,
         skills_eval=SkillMatchResult(
-            job_requirements=[{"capability": "Python"}],
+            job_requirements=[{"skill_name": "Python"}],
             matched_cv_skills=["Python"],
             missing_cv_skills=[],
             rationale="The requirement is present.",
-        ),
-        skill_tenure=SkillTenureOutput(
-            skills=[
-                {
-                    "requirement_id": 0,
-                    "target_years": 1.0,
-                    "start_date": "2020-01",
-                    "end_date": "2022-01",
-                    "evidence": "Python developer",
-                }
-            ]
         ),
         overall_experience=OverallExperienceOutput(
             target_job_title="Python Developer",
@@ -43,8 +32,7 @@ def make_pipeline_result() -> PipelineResult:
         scorecard=Scorecard(
             final_relevance=80.0,
             pillar_a={"score": 100.0, "raw": "1/1 skills"},
-            pillar_b={"score": 100.0, "raw": "One matched skill"},
-            pillar_c={"score": 0.0, "raw": "No relevant roles"},
+            pillar_b={"score": 0.0, "raw": "No relevant roles"},
             counted_roles=[],
         ),
         metrics=PipelineMetrics(
@@ -66,7 +54,7 @@ class ArtifactLoggerTest(unittest.TestCase):
             payload = json.loads(serialized)
             artifact = RunArtifact.model_validate_json(serialized)
 
-            self.assertEqual(payload["schema_version"], "2.1")
+            self.assertEqual(payload["schema_version"], "3.0")
             self.assertEqual(artifact.metadata.run_number, 1)
             self.assertEqual(artifact.metadata.engine, "example/model:latest")
             self.assertEqual(artifact.metadata.pii_engine, "local-pii:latest")

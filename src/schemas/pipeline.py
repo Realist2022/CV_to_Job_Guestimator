@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.schemas.experience import OverallExperienceOutput, SkillTenureOutput
+from src.schemas.experience import OverallExperienceOutput
 from src.schemas.pii import TextSpan
 from src.schemas.requirements import SkillMatchResult
 from src.schemas.scoring import Scorecard
@@ -28,7 +28,6 @@ class PipelineResult(BaseModel):
     pii_engine: str = Field(min_length=1)
     execution_seconds: float = Field(ge=0.0)
     skills_eval: SkillMatchResult
-    skill_tenure: SkillTenureOutput
     overall_experience: OverallExperienceOutput
     scorecard: Scorecard
     metrics: PipelineMetrics
