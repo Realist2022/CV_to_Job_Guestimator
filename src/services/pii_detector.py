@@ -11,6 +11,17 @@ FORBIDDEN_REDACTION_KEYWORDS: Final = [
     "CERTIFICATE", "COLLEGE", "INSTITUTE"
 ]
 
+CONTACT_OR_ID_PATTERN: Final = re.compile(
+    r"(?:"
+    r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"
+    r"|\bhttps?://[^\s,;]+|\b(?:www\.|linkedin\.com/|github\.com/)[^\s,;]+"
+    r"|\b(?:email|phone|mobile|linkedin|github|driver'?s? licen[cs]e|ird|passport)\b"
+    r"|\b\d{2,3}-\d{3}-\d{3}\b"
+    r"|\b[A-Z]{2}\d{6}\b"
+    r")",
+    re.I,
+)
+
 
 def is_valid_pii_span(span_text: str, kind: str) -> bool:
     """
@@ -29,6 +40,10 @@ def is_valid_pii_span(span_text: str, kind: str) -> bool:
         # Checks for hyphens, en-dashes, em-dashes, or standalone "TO"
         if re.search(r'[-–—]|(\bTO\b)', clean_text):
             return False
+
+    # 3. Only redact other_identifier when it is actually contact or ID material.
+    if kind == "other_identifier" and not CONTACT_OR_ID_PATTERN.search(span_text):
+        return False
 
     return True
 

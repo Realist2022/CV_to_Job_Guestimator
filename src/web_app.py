@@ -1,7 +1,7 @@
 from pathlib import Path
 import tempfile
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -19,6 +19,7 @@ from src.services import (
     InstructorClient,
     JobListing,
     PDFTextExtractionError,
+    RelevanceScoringEngine,
 )
 from src.utils import ArtifactLogger
 
@@ -39,12 +40,19 @@ def index() -> FileResponse:
 async def compare_documents(
     job_listing: UploadFile = File(...),
     candidate_cv: UploadFile = File(...),
+    skills_weight: float = Form(0.60),
+    work_experience_weight: float = Form(0.40),
 ) -> dict:
     try:
+        scoring_engine = _scoring_engine(skills_weight, work_experience_weight)
         listing = await _load_document(job_listing, JobListing, "job listing")
         cv = await _load_document(candidate_cv, CandidateCV, "candidate CV")
 
-        pipeline = ExtractionPipeline(_evaluation_client(), pii_client=_pii_client())
+        pipeline = ExtractionPipeline(
+            _evaluation_client(),
+            pii_client=_pii_client(),
+            scoring_engine=scoring_engine,
+        )
         result = pipeline.run(listing, cv, verbose=False)
         artifact_path = ArtifactLogger(output_dir="artifacts").log_run(result)
     except (PDFTextExtractionError, ValueError) as exc:
@@ -62,10 +70,23 @@ async def compare_documents(
         "execution_seconds": result.execution_seconds,
         "metrics": result.metrics.model_dump(mode="json"),
         "scorecard": result.scorecard.model_dump(mode="json"),
+        "scoring_weights": scoring_engine.weights,
         "skills_evaluation": result.skills_eval.model_dump(mode="json"),
-        "skill_tenure": result.skill_tenure.model_dump(mode="json"),
         "overall_experience": result.overall_experience.model_dump(mode="json"),
     }
+
+
+def _scoring_engine(
+    skills_weight: float,
+    work_experience_weight: float,
+) -> RelevanceScoringEngine:
+    weights = {
+        "skills_match": skills_weight,
+        "work_experience": work_experience_weight,
+    }
+    if any(weight < 0 or weight > 1 for weight in weights.values()):
+        raise ValueError("Scoring weights must be between 0.0 and 1.0.")
+    return RelevanceScoringEngine(weights)
 
 
 def _evaluation_client() -> InstructorClient:
@@ -95,10 +116,7 @@ async def _load_document(
 
     suffix = Path(upload.filename or "").suffix.lower()
     if suffix == ".txt":
-        text = _decode_text_upload(content, label)
-        if not text.strip():
-            raise ValueError(f"The {label} text file did not contain readable text.")
-        return document_type(text)
+        return document_type.from_text_bytes(content, label=label)
 
     if suffix != ".pdf":
         raise ValueError(f"The {label} must be a PDF or TXT file.")
@@ -108,15 +126,6 @@ async def _load_document(
         return document_type.from_pdf(str(temporary_path))
     finally:
         temporary_path.unlink(missing_ok=True)
-
-
-def _decode_text_upload(content: bytes, label: str) -> str:
-    for encoding in ("utf-8-sig", "utf-8", "cp1252"):
-        try:
-            return content.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    raise ValueError(f"The {label} text file could not be decoded as text.")
 
 
 def _write_temporary_upload(content: bytes, suffix: str) -> Path:

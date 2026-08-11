@@ -1,12 +1,12 @@
 import unittest
 
-from src.schemas.experience import OverallExperienceOutput, SkillTenureOutput
+from src.schemas.experience import OverallExperienceOutput
 from src.schemas.requirements import (
     JobRequirement,
-    JobRequirementsOutput,
     SkillMatchResult,
 )
-from src.services.agents import JobRequirementsAgent, SkillMatcherAgent
+from src.services.agents import SkillMatcherAgent
+from src.services.agents import OverallExperienceAgent
 from src.services.document_parser import CandidateCV, JobListing
 from src.services.scoring_engine import RelevanceScoringEngine
 
@@ -22,30 +22,7 @@ class StaticClient:
 
 
 class RequirementScoringTest(unittest.TestCase):
-    def test_shared_commercial_duration_is_grounded_from_source_clause(self):
-        client = StaticClient(
-            JobRequirementsOutput(
-                job_requirements=[
-                    {"capability": "React"},
-                    {"capability": "Node.js", "minimum_commercial_years": 2.0},
-                ]
-            )
-        )
-
-        result = JobRequirementsAgent(client).run(
-            JobListing(
-                "Requirements\n"
-                "• 2–5 years' commercial experience with React and Node.js."
-            )
-        )
-
-        self.assertIsNotNone(result)
-        self.assertEqual(
-            [item.minimum_commercial_years for item in result.job_requirements],
-            [2.0, 2.0],
-        )
-
-    def test_explicit_react_js_alias_matches_react_capability(self):
+    def test_explicit_react_js_alias_matches_react_skill_name(self):
         client = StaticClient(
             lambda model: model(
                 evaluations=[{"requirement_id": 0, "matched": False}]
@@ -53,7 +30,7 @@ class RequirementScoringTest(unittest.TestCase):
         )
 
         result = SkillMatcherAgent(client).run(
-            [JobRequirement(capability="React")],
+            [JobRequirement(skill_name="React")],
             CandidateCV("Frontend skills: React.js"),
         )
 
@@ -61,41 +38,50 @@ class RequirementScoringTest(unittest.TestCase):
         self.assertEqual(result.matched_cv_skills, ["React"])
         self.assertEqual(result.missing_cv_skills, [])
 
-    def test_capability_match_is_independent_from_commercial_tenure(self):
+    def test_overall_experience_backfills_dates_from_explicit_role_block(self):
+        client = StaticClient(
+            lambda model: model(
+                overall_experience={
+                    "target_job_title": "Intermediate Full Stack Developer",
+                    "target_overall_years": 2.0,
+                    "candidate_roles": [
+                        {
+                            "role_title": "Software Engineer/Full stack Developer",
+                            "start_date": None,
+                            "end_date": None,
+                            "match_rationale": "Directly relevant software role.",
+                            "is_relevant": True,
+                        }
+                    ],
+                }
+            )
+        )
+
+        result = OverallExperienceAgent(client).run(
+            JobListing("Intermediate Full Stack Developer"),
+            CandidateCV(
+                "Experience\n\n"
+                "FOODSTUFFS • July 2025 – October 2025\n\n"
+                "Role: Software Engineer\n\n"
+                "Engineered scalable REST API endpoints."
+            ),
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.candidate_roles[0].start_date, "July 2025")
+        self.assertEqual(result.candidate_roles[0].end_date, "October 2025")
+
+    def test_scorecard_uses_skill_name_match_and_overall_experience(self):
         requirements = [
-            JobRequirement(
-                capability="React",
-                minimum_commercial_years=2.0,
-            ),
-            JobRequirement(
-                capability="Node.js",
-                minimum_commercial_years=2.0,
-            ),
-            JobRequirement(capability="REST APIs"),
+            JobRequirement(skill_name="React"),
+            JobRequirement(skill_name="Node.js"),
+            JobRequirement(skill_name="REST APIs"),
         ]
         skills_result = SkillMatchResult(
             job_requirements=requirements,
             matched_cv_skills=["React", "Node.js", "REST APIs"],
             missing_cv_skills=[],
             rationale="All capabilities are present.",
-        )
-        commercial_tenure = SkillTenureOutput(
-            skills=[
-                {
-                    "requirement_id": 0,
-                    "target_years": 2.0,
-                    "start_date": None,
-                    "end_date": None,
-                    "evidence": "React is listed without dated commercial evidence.",
-                },
-                {
-                    "requirement_id": 1,
-                    "target_years": 2.0,
-                    "start_date": None,
-                    "end_date": None,
-                    "evidence": "Node.js is listed without dated commercial evidence.",
-                },
-            ]
         )
         overall_experience = OverallExperienceOutput(
             target_job_title="Full Stack Developer",
@@ -113,32 +99,54 @@ class RequirementScoringTest(unittest.TestCase):
 
         scorecard = RelevanceScoringEngine().calculate_scorecard(
             skills_result,
-            commercial_tenure,
             overall_experience,
         )
 
         self.assertEqual(skills_result.match_percentage, 100.0)
         self.assertEqual(scorecard.pillar_a.score, 100.0)
-        self.assertEqual(scorecard.pillar_b.score, 0.0)
-        self.assertEqual(scorecard.pillar_c.score, 12.5)
-        self.assertEqual(scorecard.final_relevance, 47.5)
+        self.assertEqual(scorecard.pillar_b.score, 12.5)
+        self.assertEqual(scorecard.final_relevance, 65.0)
 
-    def test_only_explicit_commercial_requirements_enter_tenure(self):
-        requirements = [
-            JobRequirement(capability="React", minimum_commercial_years=2.0),
-            JobRequirement(capability="Node.js", minimum_commercial_years=2.0),
-            JobRequirement(capability="REST APIs"),
-        ]
+    def test_missing_overall_experience_requirement_is_not_applicable(self):
+        skills_result = SkillMatchResult(
+            job_requirements=[JobRequirement(skill_name="Python")],
+            matched_cv_skills=["Python"],
+            missing_cv_skills=[],
+            rationale="All capabilities are present.",
+        )
+        overall_experience = OverallExperienceOutput(
+            target_job_title="Python Developer",
+            target_overall_years=None,
+            candidate_roles=[
+                {
+                    "role_title": "Python Developer",
+                    "start_date": "2020-01",
+                    "end_date": "2022-01",
+                    "match_rationale": "Built Python services matching the job responsibilities.",
+                    "is_relevant": True,
+                }
+            ],
+        )
 
-        commercial_requirements = [
-            requirement
-            for requirement in requirements
-            if requirement.minimum_commercial_years is not None
-        ]
+        scorecard = RelevanceScoringEngine().calculate_scorecard(
+            skills_result,
+            overall_experience,
+        )
+
+        self.assertFalse(scorecard.pillar_b.applicable)
+        self.assertEqual(scorecard.pillar_b.raw, "No explicit overall experience requirement")
+        self.assertEqual(scorecard.final_relevance, 100.0)
+
+    def test_duration_accepts_month_name_dates_and_range_in_start_field(self):
+        engine = RelevanceScoringEngine()
 
         self.assertEqual(
-            [requirement.capability for requirement in commercial_requirements],
-            ["React", "Node.js"],
+            engine.calculate_duration_in_years("Nov 2024 – Nov 2025", ""),
+            1.0,
+        )
+        self.assertEqual(
+            engine.calculate_duration_in_years("July 2025", "October 2025"),
+            0.25,
         )
 
 

@@ -1,22 +1,12 @@
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class JobRequirement(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    capability: str = Field(
+    skill_name: str = Field(
         min_length=1,
-        description="One atomic technical or operational capability.",
-    )
-    minimum_commercial_years: Optional[float] = Field(
-        default=None,
-        gt=0.0,
-        description=(
-            "Explicit minimum commercial years required for this capability, "
-            "or null when no capability-specific duration is stated."
-        ),
+        description="One atomic technical or operational skill_name.",
     )
 
 
@@ -30,7 +20,7 @@ class JobRequirementsOutput(BaseModel):
     def validate_job_requirements(
         cls, requirements: list[JobRequirement]
     ) -> list[JobRequirement]:
-        names = [requirement.capability.strip().casefold() for requirement in requirements]
+        names = [requirement.skill_name.strip().casefold() for requirement in requirements]
         if len(names) != len(set(names)):
             raise ValueError("job_requirements must not contain duplicates")
         return requirements
@@ -80,7 +70,7 @@ class SkillMatchResult(BaseModel):
     @model_validator(mode="after")
     def validate_requirements_coverage(self):
         requirement_names = [
-            requirement.capability for requirement in self.job_requirements
+            requirement.skill_name for requirement in self.job_requirements
         ]
         requirements = set(requirement_names)
         matched = set(self.matched_cv_skills)

@@ -1,7 +1,9 @@
 import re
 import io
 import contextlib
-from typing import Sequence, List
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Sequence
 from src.schemas.pii import TextSpan
 
 
@@ -9,10 +11,51 @@ class PDFTextExtractionError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class TextQuality:
+    char_count: int
+    word_count: int
+    line_count: int
+    weird_char_ratio: float
+    is_likely_readable: bool
+
+
+def assess_text_quality(text: str) -> TextQuality:
+    content = text or ""
+    non_whitespace = re.findall(r"\S", content)
+    words = re.findall(r"\b[\w+#.]+\b", content)
+    weird_chars = re.findall(
+        r"[^\w\s.,;:!?()&/@+#'\-\[\]{}|*\"\u2022\u2013\u2014]",
+        content,
+    )
+    weird_char_ratio = len(weird_chars) / max(len(non_whitespace), 1)
+
+    return TextQuality(
+        char_count=len(content),
+        word_count=len(words),
+        line_count=len(content.splitlines()),
+        weird_char_ratio=weird_char_ratio,
+        is_likely_readable=bool(words) and weird_char_ratio < 0.25,
+    )
+
+
 def _clean_pdf_text(text: str) -> str:
     text = (text or "").replace("\u00a0", " ")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"(?<=\w)-\n(?=\w)", "", text)
+    text = re.sub(r"(?im)^\s*(?:page\s*)?\d+\s*(?:of\s*\d+)?\s*$", "", text)
     text = re.sub(r"[ \t]+", " ", text)
+    text = "\n".join(line.strip() for line in text.splitlines())
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _decode_text_bytes(content: bytes, label: str) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "cp1252"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError(f"The {label} text could not be decoded as UTF-8 or cp1252.")
 
 
 def _extract_with_pypdf(path: str) -> str:
@@ -60,7 +103,38 @@ class SourceDocument:
         self._normalised = normalise(text)
 
     @classmethod
-    def from_pdf(cls, path: str) -> "SourceDocument":
+    def from_text(cls, text: str, *, label: str = "document") -> "SourceDocument":
+        cleaned = _clean_pdf_text(text)
+        quality = assess_text_quality(cleaned)
+        if quality.is_likely_readable:
+            return cls(cleaned)
+        if quality.word_count == 0:
+            raise ValueError(f"The {label} did not contain readable text.")
+        raise ValueError(
+            f"The {label} text looks unreadable "
+            f"({quality.word_count} words, {quality.weird_char_ratio:.1%} unusual characters)."
+        )
+
+    @classmethod
+    def from_text_bytes(cls, content: bytes, *, label: str = "document") -> "SourceDocument":
+        return cls.from_text(_decode_text_bytes(content, label), label=label)
+
+    @classmethod
+    def from_text_file(cls, path: str) -> "SourceDocument":
+        file_path = Path(path)
+        return cls.from_text_bytes(file_path.read_bytes(), label=str(file_path))
+
+    @classmethod
+    def from_path(cls, path: str) -> "SourceDocument":
+        suffix = Path(path).suffix.lower()
+        if suffix == ".txt":
+            return cls.from_text_file(path)
+        if suffix == ".pdf":
+            return cls.from_pdf(path)
+        raise ValueError(f"Document must be a PDF or TXT file: '{path}'")
+
+    @classmethod
+    def from_pdf(cls, path: str, *, cache_text: bool = False) -> "SourceDocument":
         failures = []
         extractors = (
             ("pypdf", _extract_with_pypdf),
@@ -75,9 +149,18 @@ class SourceDocument:
                 continue
 
             cleaned = _clean_pdf_text(raw)
-            if normalise(cleaned):
+            quality = assess_text_quality(cleaned)
+            if quality.is_likely_readable:
+                if cache_text:
+                    Path(path).with_suffix(".txt").write_text(cleaned, encoding="utf-8")
                 return cls(cleaned)
-            failures.append(f"{name}: extracted no text")
+            if quality.word_count == 0:
+                failures.append(f"{name}: extracted no text")
+                continue
+            failures.append(
+                f"{name}: extracted unreadable text "
+                f"({quality.word_count} words, {quality.weird_char_ratio:.1%} unusual characters)"
+            )
 
         detail = "; ".join(failures)
         raise PDFTextExtractionError(
@@ -128,10 +211,3 @@ class CandidateCV(SourceDocument):
                     result, flags=re.IGNORECASE,
                 )
         return CandidateCV(result)
-
-    def residual_fragments(self, spans: Sequence[TextSpan]) -> List[str]:
-        leaks = {
-            token for span in spans for token in span.text.split()
-            if len(token) > 3 and token.lower() in self._normalised
-        }
-        return sorted(leaks)

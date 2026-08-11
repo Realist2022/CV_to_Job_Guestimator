@@ -15,5 +15,4 @@ class Scorecard(BaseModel):
     final_relevance: float = Field(ge=0.0, le=100.0)
     pillar_a: ScorePillar
     pillar_b: ScorePillar
-    pillar_c: ScorePillar
     counted_roles: list[str]
