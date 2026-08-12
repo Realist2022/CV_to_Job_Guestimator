@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    env_file: .env
+    environment:
+      - PII_MODEL_BASE_URL=http://ollama:11434/v1
+      - MODEL_BASE_URL=${MODEL_BASE_URL:-http://ollama:11434/v1}
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./dataSet:/app/dataSet
+    ports:
+      - "8000:8000"
+    depends_on:
+      - ollama
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "11434:11434"
+
+volumes:
+  ollama_models:

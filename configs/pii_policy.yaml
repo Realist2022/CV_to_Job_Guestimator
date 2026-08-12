@@ -1,0 +1,5 @@
+# PII detection policy: which detectors compose the CompositePIIDetector,
+# in order. Registered names live in src/harness/runner.py.
+detectors:
+  - regex
+  - model

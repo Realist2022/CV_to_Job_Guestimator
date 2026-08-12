@@ -13,8 +13,10 @@ class InstructorClient:
         model: str = MODEL_NAME,
         base_url: str = MODEL_BASE_URL,
         api_key: str = MODEL_API_KEY,
+        temperature: float | None = None,
     ):
         self.model = model
+        self.temperature = MODEL_TEMPERATURE if temperature is None else temperature
         # Wrap standard OpenAI client with Instructor
         self.client = instructor.from_openai(
             OpenAI(base_url=base_url, api_key=api_key),
@@ -36,5 +38,5 @@ class InstructorClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=MODEL_TEMPERATURE,
+            temperature=self.temperature,
         )

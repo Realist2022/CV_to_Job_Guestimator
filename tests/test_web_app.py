@@ -62,8 +62,8 @@ class FakeLogger:
 
 
 def test_compare_endpoint_accepts_text_uploads_without_real_model_calls(monkeypatch):
-    monkeypatch.setattr("src.web_app.ExtractionPipeline", FakePipeline)
-    monkeypatch.setattr("src.web_app.ArtifactLogger", FakeLogger)
+    monkeypatch.setattr("src.api.routes.ExtractionPipeline", FakePipeline)
+    monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeLogger)
 
     client = TestClient(app)
     response = client.post(
@@ -98,7 +98,7 @@ def test_compare_endpoint_rejects_unsupported_uploads():
 
 
 def test_web_ui_renders_requirement_skill_names():
-    static_html = Path("src/web_static/index.html").read_text(encoding="utf-8")
+    static_html = Path("web/index.html").read_text(encoding="utf-8")
 
     assert "requirement.skill_name" in static_html
     assert "requirement.capability" not in static_html

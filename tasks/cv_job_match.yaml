@@ -1,0 +1,23 @@
+name: cv_job_match
+description: Full CV vs job listing comparison with the cloud evaluation model.
+pipeline: extraction
+
+models:
+  evaluation: gemini-flash
+  pii: local-llama
+
+inputs:
+  job_listing:
+    - dataSet/tradeMeJobListing/Job_listing.txt
+    - dataSet/tradeMeJobListing/Job_listing.pdf
+  candidate_cv:
+    - dataSet/tradeMeCV/Sonny H Tapara CV.txt
+    - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
+
+# Omit to use configs/scoring.yaml defaults.
+# scoring_weights:
+#   skills_match: 0.70
+#   work_experience: 0.30
+
+evaluation:
+  min_final_relevance: 0

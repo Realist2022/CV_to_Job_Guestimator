@@ -1,0 +1,22 @@
+name: model_eval
+description: >
+  Benchmarks a candidate model (e.g. the fine-tuned LoRA build) on the same
+  documents with pass/fail thresholds. Swap models.evaluation to compare.
+pipeline: extraction
+
+models:
+  evaluation: local-llama   # change to cv-guestimator-lora once built
+  pii: local-llama
+
+inputs:
+  job_listing:
+    - dataSet/tradeMeJobListing/Job_listing.txt
+    - dataSet/tradeMeJobListing/Job_listing.pdf
+  candidate_cv:
+    - dataSet/tradeMeCV/Sonny H Tapara CV.txt
+    - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
+
+evaluation:
+  min_final_relevance: 30
+  min_skills_match: 30
+  max_execution_seconds: 600
