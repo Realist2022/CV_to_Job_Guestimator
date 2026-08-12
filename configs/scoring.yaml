@@ -1,0 +1,4 @@
+# Default scoring weights. Tasks may override via scoring_weights.
+weights:
+  skills_match: 0.60
+  work_experience: 0.40

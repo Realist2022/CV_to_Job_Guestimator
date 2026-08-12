@@ -1,0 +1,15 @@
+# Modelfile for the fine-tuned CV guestimator model.
+# Build with:  ollama create cv-guestimator-lora -f docker/ollama/Modelfile
+#
+# Once you have a LoRA adapter (e.g. trained with unsloth/axolotl and
+# exported as GGUF), point ADAPTER at it. Until then this stays a
+# placeholder based on the stock model.
+
+FROM llama3.2:latest
+
+# ADAPTER ./cv-guestimator-lora.gguf
+
+PARAMETER temperature 0.0
+
+SYSTEM """You extract structured information from CVs and job listings and
+respond only with valid JSON matching the requested schema."""

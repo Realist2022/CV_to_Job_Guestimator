@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# uv for dependency installation from the lockfile
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+COPY src/ src/
+COPY configs/ configs/
+COPY tasks/ tasks/
+COPY web/index.html web/index.html
+COPY main.py ./
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+EXPOSE 8000
+CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

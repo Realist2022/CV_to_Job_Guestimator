@@ -1,0 +1,20 @@
+name: pii_redaction
+description: >
+  Runs the pipeline fully local and asserts the PII detectors actually
+  redacted spans from the candidate CV.
+pipeline: extraction
+
+models:
+  evaluation: local-llama
+  pii: local-llama
+
+inputs:
+  job_listing:
+    - dataSet/tradeMeJobListing/Job_listing.txt
+    - dataSet/tradeMeJobListing/Job_listing.pdf
+  candidate_cv:
+    - dataSet/tradeMeCV/Sonny H Tapara CV.txt
+    - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
+
+evaluation:
+  min_pii_spans: 1

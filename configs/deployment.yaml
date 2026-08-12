@@ -1,0 +1,12 @@
+# Deployment reference values used by docker-compose.yml and the Dockerfiles.
+# This file is documentation for humans; compose reads its own YAML.
+api:
+  image: cv-guestimator-api
+  port: 8000
+web:
+  image: cv-guestimator-web
+  port: 5173
+ollama:
+  image: ollama/ollama
+  port: 11434
+  models_volume: ollama_models
