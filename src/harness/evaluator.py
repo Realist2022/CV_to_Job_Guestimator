@@ -1,21 +1,8 @@
 """Judges a pipeline result against the thresholds declared in a task."""
 
-from pydantic import BaseModel
-
 from src.harness.task_loader import EvaluationCriteria
+from src.schemas.evaluation import CheckResult, EvaluationReport
 from src.schemas.pipeline import PipelineResult
-
-
-class CheckResult(BaseModel):
-    name: str
-    expected: str
-    actual: str
-    passed: bool
-
-
-class EvaluationReport(BaseModel):
-    passed: bool
-    checks: list[CheckResult]
 
 
 class ThresholdEvaluator:

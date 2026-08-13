@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from src.schemas.artifact import RunArtifact
+from src.schemas.evaluation import CheckResult, EvaluationReport
 from src.schemas.experience import OverallExperienceOutput
 from src.schemas.pipeline import PipelineMetrics, PipelineResult
 from src.schemas.pii import TextSpan
@@ -54,13 +55,40 @@ class ArtifactLoggerTest(unittest.TestCase):
             payload = json.loads(serialized)
             artifact = RunArtifact.model_validate_json(serialized)
 
-            self.assertEqual(payload["schema_version"], "3.0")
+            self.assertEqual(payload["schema_version"], "3.1")
             self.assertEqual(artifact.metadata.run_number, 1)
             self.assertEqual(artifact.metadata.engine, "example/model:latest")
             self.assertEqual(artifact.metadata.pii_engine, "local-pii:latest")
             self.assertEqual(artifact.skills_evaluation.matched_cv_skills, ["Python"])
             self.assertNotIn("Jane Doe", serialized)
             self.assertEqual(list(Path(output_dir).glob("*.tmp")), [])
+
+    def test_log_run_can_include_evaluation_report(self):
+        evaluation = EvaluationReport(
+            passed=True,
+            checks=[
+                CheckResult(
+                    name="min_final_relevance",
+                    expected=">= 30",
+                    actual="80.0",
+                    passed=True,
+                )
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as output_dir:
+            saved_path = Path(
+                ArtifactLogger(output_dir).log_run(
+                    make_pipeline_result(), evaluation=evaluation
+                )
+            )
+            artifact = RunArtifact.model_validate_json(
+                saved_path.read_text(encoding="utf-8")
+            )
+
+            self.assertIsNotNone(artifact.evaluation)
+            self.assertTrue(artifact.evaluation.passed)
+            self.assertEqual(artifact.evaluation.checks[0].name, "min_final_relevance")
 
     def test_repeated_runs_use_unique_safe_filenames(self):
         with tempfile.TemporaryDirectory() as output_dir:
