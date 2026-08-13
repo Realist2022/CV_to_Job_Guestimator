@@ -16,7 +16,7 @@ from src.services.pii_detector import (
     ModelPIIDetector,
     RegexPIIDetector,
 )
-from src.services.pipeline import ExtractionPipeline
+from src.services.extraction_pipeline import ExtractionPipeline
 from src.services.scoring_engine import RelevanceScoringEngine
 from src.utils.artifact_logger import ArtifactLogger
 
@@ -85,7 +85,7 @@ class HarnessRunner:
         evaluation = ThresholdEvaluator(task.evaluation).evaluate(result)
 
         logger = ArtifactLogger(output_dir=self.artifacts_dir)
-        artifact_path = logger.log_run(result)
+        artifact_path = logger.log_run(result, evaluation=evaluation)
 
         return HarnessRunReport(
             task_name=task.name,

@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 import tempfile
 
+from src.schemas.evaluation import EvaluationReport
 from src.schemas.artifact import RunArtifact
 from src.schemas.pipeline import PipelineResult
 
@@ -16,10 +17,12 @@ class ArtifactLogger:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.last_run_number: int | None = None
 
-    def log_run(self, result: PipelineResult) -> str:
+    def log_run(
+        self, result: PipelineResult, evaluation: EvaluationReport | None = None
+    ) -> str:
         run_number, reservation_path = self._reserve_run_number()
         try:
-            artifact = RunArtifact.from_pipeline_result(result, run_number)
+            artifact = RunArtifact.from_pipeline_result(result, run_number, evaluation)
             out_path = self._write_artifact(artifact)
             self.last_run_number = run_number
             return out_path

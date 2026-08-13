@@ -16,7 +16,7 @@ from src.services.pii_detector import (
     RegexPIIDetector,
     is_valid_pii_span,
 )
-from src.services.pipeline import ExtractionPipeline
+from src.services.extraction_pipeline import ExtractionPipeline
 
 
 class RecordingClient:

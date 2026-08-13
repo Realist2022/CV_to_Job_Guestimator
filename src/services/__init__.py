@@ -6,7 +6,7 @@ from .agents import (
     PIIAgent,
     SkillMatcherAgent,
 )
-from .pipeline import ExtractionPipeline
+from .extraction_pipeline import ExtractionPipeline
 from .scoring_engine import RelevanceScoringEngine
 
 __all__ = [

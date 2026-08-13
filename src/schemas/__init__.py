@@ -1,4 +1,5 @@
 from .artifact import ArtifactMetadata, RunArtifact
+from .evaluation import CheckResult, EvaluationReport
 from .experience import (
     OverallExperienceOutput,
     WorkRole,
@@ -30,6 +31,8 @@ __all__ = [
     "WorkRole",
     "ArtifactMetadata",
     "RunArtifact",
+    "CheckResult",
+    "EvaluationReport",
     "PipelineMetrics",
     "PipelineResult",
     "Scorecard",

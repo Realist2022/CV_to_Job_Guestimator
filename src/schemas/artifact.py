@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.schemas.evaluation import EvaluationReport
 from src.schemas.experience import OverallExperienceOutput
 from src.schemas.pipeline import PipelineMetrics, PipelineResult
 from src.schemas.requirements import SkillMatchResult
@@ -24,17 +25,21 @@ class ArtifactMetadata(BaseModel):
 class RunArtifact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["3.0"] = "3.0"
+    schema_version: Literal["3.0", "3.1"] = "3.1"
     metadata: ArtifactMetadata
     skills_evaluation: SkillMatchResult
     overall_experience: OverallExperienceOutput
     scorecard: Scorecard
     metrics: PipelineMetrics
+    evaluation: EvaluationReport | None = None
     redacted_cv: str
 
     @classmethod
     def from_pipeline_result(
-        cls, result: PipelineResult, run_number: int
+        cls,
+        result: PipelineResult,
+        run_number: int,
+        evaluation: EvaluationReport | None = None,
     ) -> "RunArtifact":
         return cls(
             metadata=ArtifactMetadata(
@@ -47,5 +52,6 @@ class RunArtifact(BaseModel):
             overall_experience=result.overall_experience,
             scorecard=result.scorecard,
             metrics=result.metrics,
+            evaluation=evaluation,
             redacted_cv=result.redacted_cv,
         )
