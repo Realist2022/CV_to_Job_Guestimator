@@ -64,6 +64,8 @@ class FakeLogger:
 def test_compare_endpoint_accepts_text_uploads_without_real_model_calls(monkeypatch):
     monkeypatch.setattr("src.api.routes.ExtractionPipeline", FakePipeline)
     monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeLogger)
+    monkeypatch.setattr("src.api.routes._evaluation_client", lambda: object())
+    monkeypatch.setattr("src.api.routes._pii_client", lambda: object())
 
     client = TestClient(app)
     response = client.post(

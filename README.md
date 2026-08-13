@@ -86,7 +86,7 @@ The web UI wraps the same pipeline with a drag-and-drop upload page and a `/api/
 | `src/model/providers.py` | Model providers (Ollama, OpenAI-compatible) that build LLM clients. |
 | `src/model/model_registry.py` | Maps provider names in `configs/llm.yaml` to provider classes. |
 | `src/model/adapters.py` | Turns a named model config into an `InstructorClient`, resolving API keys from the environment. |
-| `src/config.py` | Loads environment-based model configuration used by the web API. |
+| `src/config_loader.py` | Loads YAML-backed project configuration and `.env` values. |
 | `src/services/document_parser.py` | Defines source document types and extracts text from PDF files using `pypdf`, PyMuPDF fallback, and OCR fallback. |
 | `src/services/llm_client.py` | Wraps the OpenAI-compatible client with Instructor for structured Pydantic outputs. |
 | `src/services/agents.py` | Implements the PII, requirement extraction, skill matching, and overall experience agents. |
@@ -150,26 +150,14 @@ The first existing path in each input list wins, so TXT files take precedence ov
 
 The project uses the OpenAI Python SDK plus Instructor against OpenAI-compatible endpoints.
 
-Harness runs (`main.py`) select models by name from `configs/llm.yaml`. Cloud entries reference API keys through `api_key_env`, which is resolved from the environment or a local `.env` file (for example `GOOGLE_API_KEY` for the Gemini OpenAI-compatible endpoint).
+Harness runs (`main.py`) select models by name from `configs/llm.yaml`. The web API uses the default model names in `configs/pipeline.yaml` and resolves those names through the same `configs/llm.yaml` entries. Cloud entries reference API keys through `api_key_env`, which is resolved from the environment or a local `.env` file (for example `GOOGLE_API_KEY` for the Gemini OpenAI-compatible endpoint).
 
-The web API currently builds its clients from environment variables in `src/config.py`:
-
-| Setting | Environment variable | Default |
-| --- | --- | --- |
-| Evaluation model name | `MODEL_NAME` | `gemini-3.1-flash-lite` |
-| Evaluation base URL | `MODEL_BASE_URL` | Gemini OpenAI-compatible endpoint |
-| Evaluation API key | `MODEL_API_KEY` | `GOOGLE_API_KEY` |
-| PII model name | `PII_MODEL_NAME` | `llama3.2:latest` |
-| PII base URL | `PII_MODEL_BASE_URL` | `http://localhost:11434/v1` |
-| PII API key | `PII_MODEL_API_KEY` | `ollama` |
+Default scoring weights live in `configs/scoring.yaml`. The web API upload form can still override those weights per request.
 
 Create a local `.env` file if you need to override these values:
 
 ```env
 GOOGLE_API_KEY=<your-key>
-PII_MODEL_NAME=llama3.2:latest
-PII_MODEL_BASE_URL=http://localhost:11434/v1
-PII_MODEL_API_KEY=ollama
 ```
 
 Do not commit `.env`. It is intentionally ignored by Git.
