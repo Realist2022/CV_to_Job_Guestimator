@@ -17,7 +17,7 @@ from src.services.pii_detector import (
     ModelPIIDetector,
 )
 from src.services.scoring_engine import RelevanceScoringEngine
-from src.config import PII_MODEL_NAME, PII_MODEL_BASE_URL, PII_MODEL_API_KEY
+from src.config_loader import load_model_config, load_pipeline_model_names
 
 
 class ExtractionPipeline:
@@ -33,11 +33,7 @@ class ExtractionPipeline:
         self.skill_matcher_agent = SkillMatcherAgent(client)
         self.overall_experience_agent = OverallExperienceAgent(client)
         self.scoring_engine = scoring_engine or RelevanceScoringEngine()
-        self.pii_client = pii_client or InstructorClient(
-            model=PII_MODEL_NAME,
-            base_url=PII_MODEL_BASE_URL,
-            api_key=PII_MODEL_API_KEY,
-        )
+        self.pii_client = pii_client or _default_pii_client()
         self.pii_detector = pii_detector or CompositePIIDetector(
             RegexPIIDetector(), ModelPIIDetector(PIIAgent(self.pii_client))
         )
@@ -116,3 +112,10 @@ class ExtractionPipeline:
             redacted_cv=redacted_cv.text,
             pii_spans=spans,
         )
+
+
+def _default_pii_client() -> InstructorClient:
+    from src.model.adapters import client_from_config
+
+    model_names = load_pipeline_model_names()
+    return client_from_config(load_model_config(model_names["pii"]))

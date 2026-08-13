@@ -11,7 +11,11 @@ from src.schemas.pii import PIIOutput
 from src.schemas.requirements import JobRequirementsOutput
 from src.services.agents import PIIAgent
 from src.services.document_parser import CandidateCV, JobListing
-from src.services.pii_detector import ModelPIIDetector
+from src.services.pii_detector import (
+    ModelPIIDetector,
+    RegexPIIDetector,
+    is_valid_pii_span,
+)
 from src.services.pipeline import ExtractionPipeline
 
 
@@ -142,6 +146,52 @@ class ExtractionPipelinePrivacyTest(unittest.TestCase):
                     "kind": "other_identifier",
                     "text": "FOODSTUFFS · July 2025 – October 2025",
                 }
+            ],
+        )
+
+    def test_model_pii_guard_allows_single_date_dob_formats(self):
+        valid_dobs = [
+            "1998-05-20",
+            "20-05-1998",
+            "20/05/1998",
+            "20 May 1998",
+            "May 20, 1998",
+        ]
+
+        for dob in valid_dobs:
+            with self.subTest(dob=dob):
+                self.assertTrue(is_valid_pii_span(dob, "date_of_birth"))
+
+    def test_model_pii_guard_rejects_date_of_birth_ranges(self):
+        invalid_ranges = [
+            "2018 - 2022",
+            "July 2025 – October 2025",
+            "2020 to Present",
+            "2015 2019",
+        ]
+
+        for date_range in invalid_ranges:
+            with self.subTest(date_range=date_range):
+                self.assertFalse(is_valid_pii_span(date_range, "date_of_birth"))
+
+    def test_regex_detector_extracts_strict_email_addresses(self):
+        spans = RegexPIIDetector().detect(
+            CandidateCV(
+                "Reach us at support@example.com, "
+                "o'connor.tech+tag@sub.domain.co.uk, "
+                "or john_doe!@company.org. "
+                "Avoid invalid emails like user..name@test.com, "
+                "user@bad_domain.com, user@-domain.com, "
+                "user@domain-.com, and user@example.c."
+            )
+        )
+
+        self.assertEqual(
+            [span.text for span in spans if span.kind == "email"],
+            [
+                "support@example.com",
+                "o'connor.tech+tag@sub.domain.co.uk",
+                "john_doe!@company.org",
             ],
         )
 

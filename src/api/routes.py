@@ -4,18 +4,14 @@ import tempfile
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from src.api.schemas import CompareResponse
-from src.config import (
-    MODEL_API_KEY,
-    MODEL_BASE_URL,
-    MODEL_NAME,
-    PII_MODEL_API_KEY,
-    PII_MODEL_BASE_URL,
-    PII_MODEL_NAME,
+from src.config_loader import (
+    load_model_config,
+    load_pipeline_model_names,
+    load_scoring_weights,
 )
 from src.services import (
     CandidateCV,
     ExtractionPipeline,
-    InstructorClient,
     JobListing,
     PDFTextExtractionError,
     RelevanceScoringEngine,
@@ -31,8 +27,8 @@ router = APIRouter()
 async def compare_documents(
     job_listing: UploadFile = File(...),
     candidate_cv: UploadFile = File(...),
-    skills_weight: float = Form(0.60),
-    work_experience_weight: float = Form(0.40),
+    skills_weight: float | None = Form(None),
+    work_experience_weight: float | None = Form(None),
 ) -> CompareResponse:
     try:
         scoring_engine = _scoring_engine(skills_weight, work_experience_weight)
@@ -68,32 +64,31 @@ async def compare_documents(
 
 
 def _scoring_engine(
-    skills_weight: float,
-    work_experience_weight: float,
+    skills_weight: float | None,
+    work_experience_weight: float | None,
 ) -> RelevanceScoringEngine:
-    weights = {
-        "skills_match": skills_weight,
-        "work_experience": work_experience_weight,
-    }
+    weights = load_scoring_weights()
+    if skills_weight is not None:
+        weights["skills_match"] = skills_weight
+    if work_experience_weight is not None:
+        weights["work_experience"] = work_experience_weight
     if any(weight < 0 or weight > 1 for weight in weights.values()):
         raise ValueError("Scoring weights must be between 0.0 and 1.0.")
     return RelevanceScoringEngine(weights)
 
 
-def _evaluation_client() -> InstructorClient:
-    return InstructorClient(
-        model=MODEL_NAME,
-        base_url=MODEL_BASE_URL,
-        api_key=MODEL_API_KEY,
-    )
+def _evaluation_client():
+    from src.model.adapters import client_from_config
+
+    model_names = load_pipeline_model_names()
+    return client_from_config(load_model_config(model_names["evaluation"]))
 
 
-def _pii_client() -> InstructorClient:
-    return InstructorClient(
-        model=PII_MODEL_NAME,
-        base_url=PII_MODEL_BASE_URL,
-        api_key=PII_MODEL_API_KEY,
-    )
+def _pii_client():
+    from src.model.adapters import client_from_config
+
+    model_names = load_pipeline_model_names()
+    return client_from_config(load_model_config(model_names["pii"]))
 
 
 async def _load_document(

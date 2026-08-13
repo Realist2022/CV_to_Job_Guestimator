@@ -2,7 +2,6 @@ import instructor
 from openai import OpenAI
 from pydantic import BaseModel
 from typing import Type, Any
-from src.config import MODEL_NAME, MODEL_BASE_URL, MODEL_API_KEY, MODEL_TEMPERATURE
 
 
 class InstructorClient:
@@ -10,13 +9,13 @@ class InstructorClient:
 
     def __init__(
         self,
-        model: str = MODEL_NAME,
-        base_url: str = MODEL_BASE_URL,
-        api_key: str = MODEL_API_KEY,
+        model: str,
+        base_url: str,
+        api_key: str,
         temperature: float | None = None,
     ):
         self.model = model
-        self.temperature = MODEL_TEMPERATURE if temperature is None else temperature
+        self.temperature = 0.0 if temperature is None else temperature
         # Wrap standard OpenAI client with Instructor
         self.client = instructor.from_openai(
             OpenAI(base_url=base_url, api_key=api_key),

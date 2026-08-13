@@ -1,3 +1,6 @@
 # Pipeline runtime defaults.
 default: extraction
 verbose: true
+models:
+  evaluation: gemini-flash
+  pii: local-llama

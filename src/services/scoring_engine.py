@@ -4,10 +4,7 @@ from typing import Optional
 
 from dateutil import parser as date_parser
 
-from src.config import (
-    SKILLS_MATCH_WEIGHT,
-    WORK_EXPERIENCE_WEIGHT,
-)
+from src.config_loader import load_scoring_weights
 from src.schemas.experience import OverallExperienceOutput
 from src.schemas.requirements import SkillMatchResult
 from src.schemas.scoring import Scorecard
@@ -15,10 +12,7 @@ from src.schemas.scoring import Scorecard
 
 class RelevanceScoringEngine:
     def __init__(self, weights: Optional[dict[str, float]] = None):
-        self.weights = weights or {
-            "skills_match": SKILLS_MATCH_WEIGHT,
-            "work_experience": WORK_EXPERIENCE_WEIGHT,
-        }
+        self.weights = weights or load_scoring_weights()
         if abs(sum(self.weights.values()) - 1.0) > 1e-9:
             raise ValueError("Scoring weights must add up to 1.0")
 

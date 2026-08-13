@@ -1,6 +1,7 @@
 import re
 from abc import ABC, abstractmethod
-from typing import List, Dict, Final
+from datetime import date, datetime
+from typing import List, Dict, Final, Optional
 from src.schemas.pii import TextSpan
 from src.services.document_parser import CandidateCV, normalise
 from src.services.agents import PIIAgent
@@ -11,16 +12,79 @@ FORBIDDEN_REDACTION_KEYWORDS: Final = [
     "CERTIFICATE", "COLLEGE", "INSTITUTE"
 ]
 
+EMAIL_PATTERN: Final = re.compile(
+    r"(?<![a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-])"
+    r"[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+"
+    r"(?:\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*"
+    r"@"
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+"
+    r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])"
+    r"\b"
+)
+
 CONTACT_OR_ID_PATTERN: Final = re.compile(
-    r"(?:"
-    r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"
+    rf"(?:"
+    rf"{EMAIL_PATTERN.pattern}"
     r"|\bhttps?://[^\s,;]+|\b(?:www\.|linkedin\.com/|github\.com/)[^\s,;]+"
-    r"|\b(?:email|phone|mobile|linkedin|github|driver'?s? licen[cs]e|ird|passport)\b"
+    r"|\b(?:email|phone|mobile|linkedin|github|driver'?s? licen[cs]e|ird|passport|facebook|twitter|instagram)\b"
     r"|\b\d{2,3}-\d{3}-\d{3}\b"
     r"|\b[A-Z]{2}\d{6}\b"
     r")",
     re.I,
 )
+
+RANGE_INDICATORS: Final = re.compile(
+    r"\b(?:TO|THRU|THROUGH|UNTIL|TIL|PRESENT|CURRENT|NOW)\b",
+    re.I,
+)
+
+DOB_DATE_FORMATS: Final = [
+    "%Y-%m-%d",
+    "%d-%m-%Y",
+    "%d/%m/%Y",
+    "%m/%d/%Y",
+    "%d %B %Y",
+    "%B %d, %Y",
+    "%d %b %Y",
+    "%b %d, %Y",
+]
+
+
+def is_date_range(text: str) -> bool:
+    """Return True for likely employment/education ranges, not single dates."""
+    clean_text = text.strip().upper()
+
+    if re.search(r"\s+[-–—]\s+", clean_text):
+        return True
+
+    if RANGE_INDICATORS.search(clean_text):
+        return True
+
+    years = re.findall(r"\b(?:19|20)\d{2}\b", clean_text)
+    return len(years) >= 2
+
+
+def parse_possible_dob(text: str) -> Optional[date]:
+    clean_text = text.strip()
+    for date_format in DOB_DATE_FORMATS:
+        try:
+            return datetime.strptime(clean_text, date_format).date()
+        except ValueError:
+            continue
+    return None
+
+
+def is_valid_dob_span(span_text: str) -> bool:
+    if is_date_range(span_text):
+        return False
+
+    dob = parse_possible_dob(span_text)
+    if dob is None:
+        return True
+
+    today = date.today()
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    return 0 <= age <= 120
 
 
 def is_valid_pii_span(span_text: str, kind: str) -> bool:
@@ -37,8 +101,7 @@ def is_valid_pii_span(span_text: str, kind: str) -> bool:
 
     # 2. Protect date ranges (employment/education durations) from being tagged as date_of_birth
     if kind == "date_of_birth":
-        # Checks for hyphens, en-dashes, em-dashes, or standalone "TO"
-        if re.search(r'[-–—]|(\bTO\b)', clean_text):
+        if not is_valid_dob_span(span_text):
             return False
 
     # 3. Only redact other_identifier when it is actually contact or ID material.
@@ -60,7 +123,7 @@ class PIIDetector(ABC):
 
 class RegexPIIDetector(PIIDetector):
     PATTERNS = [
-        ("email", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
+        ("email", EMAIL_PATTERN),
         ("phone", re.compile(r"(?:\+?64[\s-]?|\b0)(?:2\d{1,2}|[3-9])[\s-]?\d{3}[\s-]?\d{3,4}\b")),
         ("ird_number", re.compile(r"\b\d{2,3}-\d{3}-\d{3}\b")),
         ("nz_drivers_licence", re.compile(r"\b[A-Z]{2}\d{6}\b")),
