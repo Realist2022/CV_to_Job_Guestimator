@@ -7,7 +7,7 @@
 
 FROM llama3.2:latest
 
-# ADAPTER ./cv-guestimator-lora.gguf
+ADAPTER C:/Projects/Fine-Tuned-Models/fine-tuning-process/outputs/checkpoint-200/adapter_model.safetensors
 
 PARAMETER temperature 0.0
 

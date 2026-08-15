@@ -2,5 +2,5 @@
 default: extraction
 verbose: true
 models:
-  evaluation: gemini-flash
+  evaluation: cv-guestimator-lora
   pii: local-llama
