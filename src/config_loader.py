@@ -11,16 +11,20 @@ CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
 load_dotenv(override=True)
 
 
-def load_yaml(name: str | Path) -> dict:
-    path = Path(name)
-    if not path.is_absolute():
-        path = CONFIG_DIR / path
-
+def read_yaml(path: str | Path) -> dict:
+    """Read a YAML mapping from an explicit path (no CONFIG_DIR resolution)."""
     with open(path, "r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
     if not isinstance(data, dict):
         raise ValueError(f"Expected a YAML mapping in {path}.")
     return data
+
+
+def load_yaml(name: str | Path) -> dict:
+    path = Path(name)
+    if not path.is_absolute():
+        path = CONFIG_DIR / path
+    return read_yaml(path)
 
 
 def load_scoring_weights() -> dict[str, float]:

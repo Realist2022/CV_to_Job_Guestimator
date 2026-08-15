@@ -1,8 +1,18 @@
 """Judges a pipeline result against the thresholds declared in a task."""
 
+from operator import ge, le
+
 from src.harness.task_loader import EvaluationCriteria
 from src.schemas.evaluation import CheckResult, EvaluationReport
 from src.schemas.pipeline import PipelineResult
+
+# criterion name -> (comparison symbol, operator, value taken from the result)
+_CHECKS = [
+    ("min_final_relevance", ">=", ge, lambda r: r.scorecard.final_relevance),
+    ("min_skills_match", ">=", ge, lambda r: r.metrics.match_percentage),
+    ("min_pii_spans", ">=", ge, lambda r: len(r.pii_spans)),
+    ("max_execution_seconds", "<=", le, lambda r: r.execution_seconds),
+]
 
 
 class ThresholdEvaluator:
@@ -11,42 +21,17 @@ class ThresholdEvaluator:
 
     def evaluate(self, result: PipelineResult) -> EvaluationReport:
         checks: list[CheckResult] = []
-        criteria = self.criteria
-
-        if criteria.min_final_relevance is not None:
+        for name, symbol, compare, actual_of in _CHECKS:
+            threshold = getattr(self.criteria, name)
+            if threshold is None:
+                continue
+            actual = actual_of(result)
             checks.append(
-                _check(
-                    "min_final_relevance",
-                    f">= {criteria.min_final_relevance}",
-                    result.scorecard.final_relevance,
-                    result.scorecard.final_relevance >= criteria.min_final_relevance,
-                )
-            )
-        if criteria.min_skills_match is not None:
-            checks.append(
-                _check(
-                    "min_skills_match",
-                    f">= {criteria.min_skills_match}",
-                    result.metrics.match_percentage,
-                    result.metrics.match_percentage >= criteria.min_skills_match,
-                )
-            )
-        if criteria.min_pii_spans is not None:
-            checks.append(
-                _check(
-                    "min_pii_spans",
-                    f">= {criteria.min_pii_spans}",
-                    len(result.pii_spans),
-                    len(result.pii_spans) >= criteria.min_pii_spans,
-                )
-            )
-        if criteria.max_execution_seconds is not None:
-            checks.append(
-                _check(
-                    "max_execution_seconds",
-                    f"<= {criteria.max_execution_seconds}",
-                    result.execution_seconds,
-                    result.execution_seconds <= criteria.max_execution_seconds,
+                CheckResult(
+                    name=name,
+                    expected=f"{symbol} {threshold}",
+                    actual=str(actual),
+                    passed=compare(actual, threshold),
                 )
             )
 
@@ -54,7 +39,3 @@ class ThresholdEvaluator:
             passed=all(check.passed for check in checks),
             checks=checks,
         )
-
-
-def _check(name: str, expected: str, actual: object, passed: bool) -> CheckResult:
-    return CheckResult(name=name, expected=expected, actual=str(actual), passed=passed)

@@ -17,7 +17,12 @@ from src.services.pii_detector import (
     ModelPIIDetector,
 )
 from src.services.scoring_engine import RelevanceScoringEngine
-from src.config_loader import load_model_config, load_pipeline_model_names
+
+
+def _require(value, failure_message: str):
+    if value is None:
+        raise RuntimeError(failure_message)
+    return value
 
 
 class ExtractionPipeline:
@@ -42,34 +47,30 @@ class ExtractionPipeline:
         self, listing: JobListing, cv: CandidateCV, *, verbose: bool = True
     ) -> PipelineResult:
         started = time.time()
+        say = print if verbose else (lambda *_: None)
 
         # STEP 1: Detect and redact PII from the Candidate CV ONLY
-        if verbose:
-            print(" -> [1/5] Detecting and redacting PII from Candidate CV...")
+        say(" -> [1/5] Detecting and redacting PII from Candidate CV...")
         spans = self.pii_detector.detect(cv)
         redacted_cv = cv.redacted(spans)
-
-        if verbose:
-            print(f"       {len(spans)} PII spans redacted from CV.")
+        say(f"       {len(spans)} PII spans redacted from CV.")
 
         # STEP 2: Extract an authoritative requirement list from the untouched listing
-        if verbose:
-            print(" -> [2/5] Extracting job requirements...")
-
-        requirements_result = self.job_requirements_agent.run(listing)
-        if requirements_result is None:
-            raise RuntimeError("Job requirement extraction failed.")
+        say(" -> [2/5] Extracting job requirements...")
+        requirements_result = _require(
+            self.job_requirements_agent.run(listing),
+            "Job requirement extraction failed.",
+        )
 
         # STEP 3: Classify only the extracted requirements against the redacted CV
-        if verbose:
-            print(" -> [3/5] Evaluating extracted requirements against Candidate CV...")
-
-        evaluation = self.skill_matcher_agent.run(
-            job_requirements=requirements_result.job_requirements,
-            cv=redacted_cv,
+        say(" -> [3/5] Evaluating extracted requirements against Candidate CV...")
+        evaluation = _require(
+            self.skill_matcher_agent.run(
+                job_requirements=requirements_result.job_requirements,
+                cv=redacted_cv,
+            ),
+            "Skill matching evaluation failed.",
         )
-        if evaluation is None:
-            raise RuntimeError("Skill matching evaluation failed.")
 
         skills_result = SkillMatchResult(
             job_requirements=requirements_result.job_requirements,
@@ -77,17 +78,15 @@ class ExtractionPipeline:
             missing_cv_skills=evaluation.missing_cv_skills,
             rationale=evaluation.rationale,
         )
-
-        if verbose:
-            print(f"       Matched {skills_result.total_matched_skills}/{skills_result.total_job_requirements} skills "
-                  f"({skills_result.match_percentage}%)")
+        say(f"       Matched {skills_result.total_matched_skills}/{skills_result.total_job_requirements} skills "
+            f"({skills_result.match_percentage}%)")
 
         # STEP 4: Extract and classify the candidate's roles from the redacted CV
-        if verbose:
-            print(" -> [4/5] Evaluating overall relevant career experience...")
-        overall_experience = self.overall_experience_agent.run(listing, redacted_cv)
-        if overall_experience is None:
-            raise RuntimeError("Overall experience extraction failed.")
+        say(" -> [4/5] Evaluating overall relevant career experience...")
+        overall_experience = _require(
+            self.overall_experience_agent.run(listing, redacted_cv),
+            "Overall experience extraction failed.",
+        )
 
         scorecard = self.scoring_engine.calculate_scorecard(
             skills_result,
@@ -115,7 +114,7 @@ class ExtractionPipeline:
 
 
 def _default_pii_client() -> InstructorClient:
-    from src.model.adapters import client_from_config
+    # Imported lazily to avoid a circular import through src.services.
+    from src.model.adapters import client_for_role
 
-    model_names = load_pipeline_model_names()
-    return client_from_config(load_model_config(model_names["pii"]))
+    return client_for_role("pii")

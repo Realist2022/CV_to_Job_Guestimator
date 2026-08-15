@@ -4,11 +4,8 @@ import tempfile
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from src.api.schemas import CompareResponse
-from src.config_loader import (
-    load_model_config,
-    load_pipeline_model_names,
-    load_scoring_weights,
-)
+from src.config_loader import load_scoring_weights
+from src.model.adapters import client_for_role
 from src.services import (
     CandidateCV,
     ExtractionPipeline,
@@ -36,8 +33,8 @@ async def compare_documents(
         cv = await _load_document(candidate_cv, CandidateCV, "candidate CV")
 
         pipeline = ExtractionPipeline(
-            _evaluation_client(),
-            pii_client=_pii_client(),
+            client_for_role("evaluation"),
+            pii_client=client_for_role("pii"),
             scoring_engine=scoring_engine,
         )
         result = pipeline.run(listing, cv, verbose=False)
@@ -75,20 +72,6 @@ def _scoring_engine(
     if any(weight < 0 or weight > 1 for weight in weights.values()):
         raise ValueError("Scoring weights must be between 0.0 and 1.0.")
     return RelevanceScoringEngine(weights)
-
-
-def _evaluation_client():
-    from src.model.adapters import client_from_config
-
-    model_names = load_pipeline_model_names()
-    return client_from_config(load_model_config(model_names["evaluation"]))
-
-
-def _pii_client():
-    from src.model.adapters import client_from_config
-
-    model_names = load_pipeline_model_names()
-    return client_from_config(load_model_config(model_names["pii"]))
 
 
 async def _load_document(

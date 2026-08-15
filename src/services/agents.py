@@ -155,14 +155,11 @@ class JobRequirementsAgent:
 
     def run(self, listing: JobListing) -> Optional[JobRequirementsOutput]:
         user_message = f"JOB DESCRIPTION:\n{listing.requirements_section}"
-        result = self.client.complete(
+        return self.client.complete(
             system_prompt=self.system_prompt,
             user_prompt=user_message,
             response_model=JobRequirementsOutput,
         )
-        if result is None:
-            return None
-        return result
 
 
 class SkillMatcherAgent:
@@ -206,16 +203,10 @@ class SkillMatcherAgent:
             for requirement_id, requirement in enumerate(job_requirements)
             if _contains_skill_name(cv.text, requirement.skill_name)
         )
-        matched_skills = [
-            requirement.skill_name
-            for requirement_id, requirement in enumerate(job_requirements)
-            if requirement_id in matched_ids
-        ]
-        missing_skills = [
-            requirement.skill_name
-            for requirement_id, requirement in enumerate(job_requirements)
-            if requirement_id not in matched_ids
-        ]
+        matched_skills, missing_skills = [], []
+        for requirement_id, requirement in enumerate(job_requirements):
+            bucket = matched_skills if requirement_id in matched_ids else missing_skills
+            bucket.append(requirement.skill_name)
         rationale = f"Matched {len(matched_skills)} of {len(job_requirements)} requirements."
         if missing_skills:
             rationale = f"{rationale[:-1]}; missing: {', '.join(missing_skills)}."
@@ -248,9 +239,12 @@ class OverallExperienceAgent:
         )
         if result is None:
             return None
-        if isinstance(result, OverallExperienceOutput):
-            return _backfill_overall_experience_dates(result, cv.text)
-        return _backfill_overall_experience_dates(result.overall_experience, cv.text)
+        output = (
+            result
+            if isinstance(result, OverallExperienceOutput)
+            else result.overall_experience
+        )
+        return _backfill_overall_experience_dates(output, cv.text)
 
 
 class PIIAgent:

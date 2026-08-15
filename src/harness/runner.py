@@ -6,7 +6,8 @@ from pydantic import BaseModel
 
 from src.harness.evaluator import EvaluationReport, ThresholdEvaluator
 from src.harness.registry import pipelines, pii_detectors
-from src.harness.task_loader import TaskSpec, load_task, load_yaml
+from src.config_loader import read_yaml
+from src.harness.task_loader import TaskSpec, load_task
 from src.model.adapters import client_from_config
 from src.schemas.pipeline import PipelineResult
 from src.services.agents import PIIAgent
@@ -46,13 +47,12 @@ class HarnessRunner:
     ):
         configs_dir = Path(configs_dir)
         self.artifacts_dir = artifacts_dir
-        self.model_configs: dict = load_yaml(configs_dir / "llm.yaml")["models"]
-        self.default_weights: dict = load_yaml(configs_dir / "scoring.yaml")["weights"]
-        self.pii_detector_names: list[str] = load_yaml(configs_dir / "pii_policy.yaml")[
+        self.model_configs: dict = read_yaml(configs_dir / "llm.yaml")["models"]
+        self.default_weights: dict = read_yaml(configs_dir / "scoring.yaml")["weights"]
+        self.pii_detector_names: list[str] = read_yaml(configs_dir / "pii_policy.yaml")[
             "detectors"
         ]
-        pipeline_config = load_yaml(configs_dir / "pipeline.yaml")
-        self.verbose: bool = pipeline_config.get("verbose", True)
+        self.verbose: bool = read_yaml(configs_dir / "pipeline.yaml").get("verbose", True)
 
     def run(self, task: TaskSpec | str | Path) -> HarnessRunReport:
         if not isinstance(task, TaskSpec):
