@@ -5,7 +5,7 @@ description: >
 pipeline: extraction
 
 models:
-  evaluation: local-llama   # change to cv-guestimator-lora once built
+  evaluation: cv-guestimator-lora
   pii: local-llama
 
 inputs:
