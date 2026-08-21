@@ -49,10 +49,16 @@ def load_model_config(name: str) -> dict:
 
 def load_pipeline_model_names() -> dict[str, str]:
     pipeline_config = load_yaml("pipeline.yaml")
-    models = pipeline_config.get("models", {})
-    if not isinstance(models, dict):
-        raise ValueError("configs/pipeline.yaml models must be a mapping.")
-    return {
-        "evaluation": models.get("evaluation", "gemini-flash"),
-        "pii": models.get("pii", "local-llama"),
-    }
+    models = pipeline_config.get("models")
+    if not isinstance(models, dict) or "evaluation" not in models or "pii" not in models:
+        raise ValueError(
+            "configs/pipeline.yaml must define models.evaluation and models.pii."
+        )
+    return {"evaluation": models["evaluation"], "pii": models["pii"]}
+
+
+def load_pii_detector_names() -> list[str]:
+    detectors = load_yaml("pii_policy.yaml").get("detectors")
+    if not isinstance(detectors, list) or not detectors:
+        raise ValueError("configs/pii_policy.yaml must define a non-empty detectors list.")
+    return list(detectors)

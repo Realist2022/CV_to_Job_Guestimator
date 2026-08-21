@@ -70,8 +70,24 @@ def main():
         print(f"  Rationale: {role.match_rationale}")
         print()
 
+    if pipeline_data.trace:
+        print("\nPIPELINE TRACE")
+        print("-" * 66)
+        for span in pipeline_data.trace:
+            retry_note = (
+                f"  ({span.attempts} attempts)" if span.attempts and span.attempts > 1 else ""
+            )
+            print(f"  {span.step:<30} {span.duration_seconds:>6.2f}s{retry_note}")
+        step_time_sum = round(sum(span.duration_seconds for span in pipeline_data.trace), 2)
+        overlap_saved = round(step_time_sum - pipeline_data.execution_seconds, 2)
+        print(f"  {'-' * 38}")
+        print(f"  {'Sum of step time':<30} {step_time_sum:>6.2f}s")
+        print(f"  {'Actual wall time':<30} {pipeline_data.execution_seconds:>6.2f}s")
+        if overlap_saved > 0:
+            print(f"  (saved {overlap_saved:.2f}s by running independent steps concurrently)")
+
     if report.evaluation.checks:
-        print("HARNESS EVALUATION")
+        print("\nHARNESS EVALUATION")
         print("-" * 66)
         for check in report.evaluation.checks:
             status = "PASS" if check.passed else "FAIL"
@@ -79,7 +95,8 @@ def main():
         print(f"  Overall: {'PASS' if report.evaluation.passed else 'FAIL'}")
 
     print("=" * 66)
-    print(f"\nRun #{report.run_number:06d} artifact saved to: {report.artifact_path}\n")
+    print(f"\nTrace ID: {pipeline_data.trace_id}")
+    print(f"Run #{report.run_number:06d} artifact saved to: {report.artifact_path}\n")
 
 
 if __name__ == "__main__":

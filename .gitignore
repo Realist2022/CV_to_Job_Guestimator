@@ -36,3 +36,6 @@ artifacts/
 
 # Local/private source documents
 dataSet/
+
+# Local fine-tuned model exports (large binary, machine-specific)
+docker/ollama/*.gguf

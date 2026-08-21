@@ -4,7 +4,7 @@ import re
 import tempfile
 
 from src.schemas.evaluation import EvaluationReport
-from src.schemas.artifact import RunArtifact
+from src.schemas.artifact import RunArtifact, RunConfig
 from src.schemas.pipeline import PipelineResult
 
 
@@ -18,11 +18,16 @@ class ArtifactLogger:
         self.last_run_number: int | None = None
 
     def log_run(
-        self, result: PipelineResult, evaluation: EvaluationReport | None = None
+        self,
+        result: PipelineResult,
+        evaluation: EvaluationReport | None = None,
+        config: RunConfig | None = None,
     ) -> str:
         run_number, reservation_path = self._reserve_run_number()
         try:
-            artifact = RunArtifact.from_pipeline_result(result, run_number, evaluation)
+            artifact = RunArtifact.from_pipeline_result(
+                result, run_number, evaluation, config
+            )
             out_path = self._write_artifact(artifact)
             self.last_run_number = run_number
             return out_path
@@ -57,9 +62,12 @@ class ArtifactLogger:
             r"[^A-Za-z0-9._-]+", "_", artifact.metadata.engine
         ).strip("._") or "unknown-engine"
         timestamp = artifact.metadata.timestamp.strftime("%Y%m%dT%H%M%S.%fZ")
+        # trace_id is a time-ordered UUIDv7, so its leading hex digits are
+        # mostly timestamp and don't add much filename entropy; the tail is
+        # its random portion, so use that for a short unique-looking suffix.
         filename = (
             f"run-{artifact.metadata.run_number:06d}_{safe_engine_name}_"
-            f"{timestamp}_{str(artifact.metadata.run_id)[:8]}.json"
+            f"{timestamp}_{str(artifact.metadata.trace_id)[-8:]}.json"
         )
         out_path = self.output_dir / filename
         temporary_path: Path | None = None

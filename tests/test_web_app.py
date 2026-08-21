@@ -57,14 +57,23 @@ class FakeLogger:
     def __init__(self, *_args, **_kwargs):
         pass
 
-    def log_run(self, _result):
+    def log_run(self, _result, config=None):
         return "artifacts/run-test.json"
+
+
+class FakeClient:
+    def __init__(self, model: str, temperature: float = 0.0):
+        self.model = model
+        self.temperature = temperature
 
 
 def test_compare_endpoint_accepts_text_uploads_without_real_model_calls(monkeypatch):
     monkeypatch.setattr("src.api.routes.ExtractionPipeline", FakePipeline)
     monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeLogger)
-    monkeypatch.setattr("src.api.routes.client_for_role", lambda _role: object())
+    monkeypatch.setattr(
+        "src.api.routes.client_for_role",
+        lambda role: FakeClient(model=f"fake-{role}"),
+    )
 
     client = TestClient(app)
     response = client.post(

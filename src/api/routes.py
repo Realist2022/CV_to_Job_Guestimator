@@ -4,8 +4,13 @@ import tempfile
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from src.api.schemas import CompareResponse
-from src.config_loader import load_scoring_weights
+from src.config_loader import (
+    load_pii_detector_names,
+    load_pipeline_model_names,
+    load_scoring_weights,
+)
 from src.model.adapters import client_for_role
+from src.schemas.artifact import RunConfig, RunModelConfig
 from src.services import (
     CandidateCV,
     ExtractionPipeline,
@@ -32,13 +37,34 @@ async def compare_documents(
         listing = await _load_document(job_listing, JobListing, "job listing")
         cv = await _load_document(candidate_cv, CandidateCV, "candidate CV")
 
+        model_names = load_pipeline_model_names()
+        eval_client = client_for_role("evaluation")
+        pii_client = client_for_role("pii")
+
         pipeline = ExtractionPipeline(
-            client_for_role("evaluation"),
-            pii_client=client_for_role("pii"),
+            eval_client,
+            pii_client=pii_client,
             scoring_engine=scoring_engine,
         )
         result = pipeline.run(listing, cv, verbose=False)
-        artifact_path = ArtifactLogger(output_dir="artifacts").log_run(result)
+        run_config = RunConfig(
+            pipeline="extraction",
+            scoring_weights=scoring_engine.weights,
+            pii_detectors=load_pii_detector_names(),
+            evaluation_model=RunModelConfig(
+                name=model_names["evaluation"],
+                engine=eval_client.model,
+                temperature=eval_client.temperature,
+            ),
+            pii_model=RunModelConfig(
+                name=model_names["pii"],
+                engine=pii_client.model,
+                temperature=pii_client.temperature,
+            ),
+        )
+        artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
+            result, config=run_config
+        )
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

@@ -1,10 +1,11 @@
 import re
 from abc import ABC, abstractmethod
 from datetime import date, datetime
-from typing import List, Dict, Final, Optional
+from typing import Callable, Dict, Final, List, Optional
 from src.schemas.pii import TextSpan
 from src.services.document_parser import CandidateCV, normalise
 from src.services.agents import PIIAgent
+from src.services.llm_client import InstructorClient
 
 # Keywords that should never be tagged under marital_or_family
 FORBIDDEN_REDACTION_KEYWORDS: Final = [
@@ -206,3 +207,28 @@ class CompositePIIDetector(PIIDetector):
                     seen.add(key)
                     spans.append(span)
         return spans
+
+
+# Canonical name -> factory for each known detector. This is the single
+# place that maps a configs/pii_policy.yaml detector name to a concrete
+# implementation; both the harness's pluggable registry (see
+# src/harness/runner.py) and ExtractionPipeline's own default (used when
+# nothing calls the harness, e.g. the web API) build from this map so a
+# name means the same thing everywhere instead of two hardcoded defaults
+# drifting apart.
+PII_DETECTOR_FACTORIES: Dict[str, Callable[[Optional[InstructorClient]], PIIDetector]] = {
+    "regex": lambda _pii_client: RegexPIIDetector(),
+    "model": lambda pii_client: ModelPIIDetector(PIIAgent(pii_client)),
+}
+
+
+def build_pii_detector(
+    names: List[str], pii_client: Optional[InstructorClient] = None
+) -> CompositePIIDetector:
+    """Compose a CompositePIIDetector from configs/pii_policy.yaml detector names."""
+    try:
+        detectors = [PII_DETECTOR_FACTORIES[name](pii_client) for name in names]
+    except KeyError as exc:
+        known = ", ".join(sorted(PII_DETECTOR_FACTORIES))
+        raise KeyError(f"Unknown PII detector '{exc.args[0]}'. Known: {known}") from None
+    return CompositePIIDetector(*detectors)

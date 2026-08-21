@@ -1,10 +1,10 @@
-from .artifact import ArtifactMetadata, RunArtifact
+from .artifact import ArtifactMetadata, RunArtifact, RunConfig, RunModelConfig
 from .evaluation import CheckResult, EvaluationReport
 from .experience import (
     OverallExperienceOutput,
     WorkRole,
 )
-from .pipeline import PipelineMetrics, PipelineResult
+from .pipeline import PipelineMetrics, PipelineResult, TraceSpan
 from .pii import PIIKind, PIIOutput, PIISpanModel, TextSpan
 from .requirements import (
     JobRequirement,
@@ -31,10 +31,13 @@ __all__ = [
     "WorkRole",
     "ArtifactMetadata",
     "RunArtifact",
+    "RunConfig",
+    "RunModelConfig",
     "CheckResult",
     "EvaluationReport",
     "PipelineMetrics",
     "PipelineResult",
+    "TraceSpan",
     "Scorecard",
     "ScorePillar",
 ]

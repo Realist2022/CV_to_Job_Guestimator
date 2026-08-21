@@ -270,7 +270,7 @@ Run everything with:
 docker compose up --build
 ```
 
-`artifacts/` and `dataSet/` are mounted into the api container as volumes so private inputs and run traces stay on the host. `docker/ollama/Modelfile` is a placeholder for a fine-tuned LoRA build: once an adapter exists, point `ADAPTER` at it, run `ollama create cv-guestimator-lora -f docker/ollama/Modelfile`, and reference `cv-guestimator-lora` from `configs/llm.yaml` in a task.
+`artifacts/` and `dataSet/` are mounted into the api container as volumes so private inputs and run traces stay on the host. `docker/ollama/Modelfile` builds a fine-tuned model from a local GGUF export: drop your exported file in as `docker/ollama/cv-guestimator.gguf` (gitignored), run `ollama create cv-guestimator-lora -f docker/ollama/Modelfile`, and reference `cv-guestimator-lora` from `configs/llm.yaml` in a task.
 
 ## Scoring Logic
 
