@@ -1,15 +1,18 @@
 # Modelfile for the fine-tuned CV guestimator model.
-# Build with:  ollama create cv-guestimator-lora -f docker/ollama/Modelfile
 #
-# Once you have a LoRA adapter (e.g. trained with unsloth/axolotl and
-# exported as GGUF), point ADAPTER at it. Until then this stays a
-# placeholder based on the stock model.
+# Export your fine-tuned GGUF build (e.g. from Unsloth) into this directory
+# as cv-guestimator.gguf (gitignored — it never gets committed), then build
+# with:  ollama create cv-guestimator-lora -f docker/ollama/Modelfile
+#
+# `ollama create -f` resolves FROM relative to this file, so this path stays
+# portable across machines instead of pointing at one person's local export.
+FROM ./cv-guestimator.gguf
 
-FROM llama3.2:latest
+# Increase context window to handle long CVs and Job Descriptions
+PARAMETER num_ctx 8192
 
-ADAPTER C:/Projects/Fine-Tuned-Models/fine-tuning-process/outputs/checkpoint-200/adapter_model.safetensors
+# Lower temperature for strict, analytical extraction 
+PARAMETER temperature 0.1
 
-PARAMETER temperature 0.0
-
-SYSTEM """You extract structured information from CVs and job listings and
-respond only with valid JSON matching the requested schema."""
+# Optional but recommended: bake in your base system prompt
+SYSTEM """You are an expert HR parsing assistant. Your job is to extract skills from CVs and Job Descriptions and output valid JSON."""

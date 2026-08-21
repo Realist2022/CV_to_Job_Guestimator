@@ -2,8 +2,14 @@
 
 import os
 
+from src.config_loader import load_model_config, load_pipeline_model_names
 from src.model.model_registry import get_provider_class
 from src.services.llm_client import InstructorClient
+
+
+def client_for_role(role: str) -> InstructorClient:
+    """Build the client configured in configs/pipeline.yaml for 'evaluation' or 'pii'."""
+    return client_from_config(load_model_config(load_pipeline_model_names()[role]))
 
 
 def client_from_config(config: dict) -> InstructorClient:

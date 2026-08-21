@@ -2,8 +2,9 @@
 
 from pathlib import Path
 
-import yaml
 from pydantic import BaseModel, Field
+
+from src.config_loader import read_yaml
 
 
 class ModelSelection(BaseModel):
@@ -37,13 +38,5 @@ class TaskSpec(BaseModel):
     evaluation: EvaluationCriteria = Field(default_factory=EvaluationCriteria)
 
 
-def load_yaml(path: str | Path) -> dict:
-    with open(path, "r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle)
-    if not isinstance(data, dict):
-        raise ValueError(f"Expected a YAML mapping in {path}.")
-    return data
-
-
 def load_task(path: str | Path) -> TaskSpec:
-    return TaskSpec.model_validate(load_yaml(path))
+    return TaskSpec.model_validate(read_yaml(path))

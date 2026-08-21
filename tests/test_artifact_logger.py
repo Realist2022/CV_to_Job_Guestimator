@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from src.schemas.artifact import RunArtifact
+from src.schemas.artifact import RunArtifact, RunConfig, RunModelConfig
 from src.schemas.evaluation import CheckResult, EvaluationReport
 from src.schemas.experience import OverallExperienceOutput
 from src.schemas.pipeline import PipelineMetrics, PipelineResult
@@ -49,19 +49,54 @@ def make_pipeline_result() -> PipelineResult:
 
 class ArtifactLoggerTest(unittest.TestCase):
     def test_log_run_writes_a_versioned_valid_artifact_without_raw_pii(self):
+        result = make_pipeline_result()
         with tempfile.TemporaryDirectory() as output_dir:
-            saved_path = Path(ArtifactLogger(output_dir).log_run(make_pipeline_result()))
+            saved_path = Path(ArtifactLogger(output_dir).log_run(result))
             serialized = saved_path.read_text(encoding="utf-8")
             payload = json.loads(serialized)
             artifact = RunArtifact.model_validate_json(serialized)
 
-            self.assertEqual(payload["schema_version"], "3.1")
+            self.assertEqual(payload["schema_version"], "3.2")
             self.assertEqual(artifact.metadata.run_number, 1)
             self.assertEqual(artifact.metadata.engine, "example/model:latest")
             self.assertEqual(artifact.metadata.pii_engine, "local-pii:latest")
             self.assertEqual(artifact.skills_evaluation.matched_cv_skills, ["Python"])
             self.assertNotIn("Jane Doe", serialized)
             self.assertEqual(list(Path(output_dir).glob("*.tmp")), [])
+            self.assertEqual(artifact.metadata.trace_id, result.trace_id)
+            self.assertIn(str(result.trace_id)[-8:], saved_path.name)
+            self.assertIsNone(artifact.config)
+
+    def test_log_run_snapshots_the_config_that_produced_it(self):
+        result = make_pipeline_result()
+        config = RunConfig(
+            task_name="cv_job_match",
+            task_path="tasks/cv_job_match.yaml",
+            pipeline="extraction",
+            scoring_weights={"skills_match": 0.6, "work_experience": 0.4},
+            pii_detectors=["regex", "model"],
+            evaluation_model=RunModelConfig(
+                name="gemini-flash", engine="gemini-3.1-flash-lite", temperature=0.0
+            ),
+            pii_model=RunModelConfig(
+                name="local-llama", engine="llama3.2:latest", temperature=0.0
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as output_dir:
+            saved_path = Path(
+                ArtifactLogger(output_dir).log_run(result, config=config)
+            )
+            artifact = RunArtifact.model_validate_json(
+                saved_path.read_text(encoding="utf-8")
+            )
+
+            self.assertIsNotNone(artifact.config)
+            self.assertEqual(artifact.config.task_name, "cv_job_match")
+            self.assertEqual(artifact.config.scoring_weights["skills_match"], 0.6)
+            self.assertEqual(artifact.config.evaluation_model.name, "gemini-flash")
+            self.assertEqual(artifact.metadata.trace_id, result.trace_id)
+            self.assertEqual(artifact.trace, result.trace)
 
     def test_log_run_can_include_evaluation_report(self):
         evaluation = EvaluationReport(

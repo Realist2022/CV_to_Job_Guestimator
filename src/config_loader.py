@@ -11,16 +11,20 @@ CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
 load_dotenv(override=True)
 
 
-def load_yaml(name: str | Path) -> dict:
-    path = Path(name)
-    if not path.is_absolute():
-        path = CONFIG_DIR / path
-
+def read_yaml(path: str | Path) -> dict:
+    """Read a YAML mapping from an explicit path (no CONFIG_DIR resolution)."""
     with open(path, "r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
     if not isinstance(data, dict):
         raise ValueError(f"Expected a YAML mapping in {path}.")
     return data
+
+
+def load_yaml(name: str | Path) -> dict:
+    path = Path(name)
+    if not path.is_absolute():
+        path = CONFIG_DIR / path
+    return read_yaml(path)
 
 
 def load_scoring_weights() -> dict[str, float]:
@@ -45,10 +49,16 @@ def load_model_config(name: str) -> dict:
 
 def load_pipeline_model_names() -> dict[str, str]:
     pipeline_config = load_yaml("pipeline.yaml")
-    models = pipeline_config.get("models", {})
-    if not isinstance(models, dict):
-        raise ValueError("configs/pipeline.yaml models must be a mapping.")
-    return {
-        "evaluation": models.get("evaluation", "gemini-flash"),
-        "pii": models.get("pii", "local-llama"),
-    }
+    models = pipeline_config.get("models")
+    if not isinstance(models, dict) or "evaluation" not in models or "pii" not in models:
+        raise ValueError(
+            "configs/pipeline.yaml must define models.evaluation and models.pii."
+        )
+    return {"evaluation": models["evaluation"], "pii": models["pii"]}
+
+
+def load_pii_detector_names() -> list[str]:
+    detectors = load_yaml("pii_policy.yaml").get("detectors")
+    if not isinstance(detectors, list) or not detectors:
+        raise ValueError("configs/pii_policy.yaml must define a non-empty detectors list.")
+    return list(detectors)
