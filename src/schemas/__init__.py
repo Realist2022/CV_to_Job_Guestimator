@@ -4,8 +4,8 @@ from .experience import (
     OverallExperienceOutput,
     WorkRole,
 )
-from .pipeline import PipelineMetrics, PipelineResult, TraceSpan
 from .pii import PIIKind, PIIOutput, PIISpanModel, TextSpan
+from .pipeline import PipelineMetrics, PipelineResult, TraceSpan
 from .requirements import (
     JobRequirement,
     JobRequirementsOutput,

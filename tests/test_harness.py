@@ -5,43 +5,14 @@ import pytest
 from src.harness.evaluator import ThresholdEvaluator
 from src.harness.registry import Registry
 from src.harness.task_loader import EvaluationCriteria, load_task
-from src.schemas.experience import OverallExperienceOutput
-from src.schemas.pii import TextSpan
-from src.schemas.pipeline import PipelineMetrics, PipelineResult
-from src.schemas.requirements import SkillMatchResult
-from src.schemas.scoring import Scorecard
+from tests.factories import build_pipeline_result
 
 
-def _fake_result(final_relevance=45.0, match_percentage=100.0) -> PipelineResult:
-    return PipelineResult(
-        engine="fake-eval",
-        pii_engine="fake-pii",
-        execution_seconds=0.5,
-        skills_eval=SkillMatchResult(
-            job_requirements=[{"skill_name": "React"}],
-            matched_cv_skills=["React"],
-            missing_cv_skills=[],
-            rationale="React is present.",
-        ),
-        overall_experience=OverallExperienceOutput(
-            target_job_title="Full Stack Developer",
-            target_overall_years=2.0,
-            candidate_roles=[],
-        ),
-        scorecard=Scorecard(
-            final_relevance=final_relevance,
-            pillar_a={"score": match_percentage, "raw": "1/1 skills"},
-            pillar_b={"score": 0.0, "raw": "No relevant roles", "applicable": False},
-            counted_roles=[],
-        ),
-        metrics=PipelineMetrics(
-            total_requirements=1,
-            total_matched=1,
-            match_percentage=match_percentage,
-            final_relevance=final_relevance,
-        ),
-        redacted_cv="React developer",
-        pii_spans=[TextSpan(kind="person_name", text="Jane Doe")],
+def _fake_result(final_relevance=45.0, match_percentage=100.0):
+    return build_pipeline_result(
+        final_relevance=final_relevance,
+        match_percentage=match_percentage,
+        pillar_b_applicable=False,
     )
 
 
@@ -49,9 +20,20 @@ def test_load_task_parses_all_shipped_tasks():
     for path in Path("tasks").glob("*.yaml"):
         task = load_task(path)
         assert task.name
-        assert task.models.evaluation
-        assert task.inputs.job_listing
-        assert task.inputs.candidate_cv
+        # models.evaluation/.pii and inputs.job_listing/.candidate_cv are
+        # each optional now (see task_loader.py): which ones a task must
+        # set depends on its pipeline, since "ingestion" never calls an
+        # evaluation model and "matching" never calls a PII model or takes
+        # a raw candidate_cv path.
+        if task.pipeline != "ingestion":
+            assert task.models.evaluation
+            assert task.inputs.job_listing
+        if task.pipeline != "matching":
+            assert task.models.pii
+        if task.pipeline == "matching":
+            assert task.inputs.redacted_cv_id
+        else:
+            assert task.inputs.candidate_cv
 
 
 def test_threshold_evaluator_passes_when_criteria_met():
@@ -83,7 +65,7 @@ def test_registry_rejects_unknown_and_duplicate_names():
 
 def test_runner_registers_default_components():
     from src.harness import runner  # noqa: F401  (import triggers registration)
-    from src.harness.registry import pipelines, pii_detectors
+    from src.harness.registry import pii_detectors, pipelines
 
     assert "extraction" in pipelines.names()
-    assert {"regex", "model"} <= set(pii_detectors.names())
+    assert {"regex", "model", "presidio"} <= set(pii_detectors.names())

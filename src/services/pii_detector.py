@@ -2,9 +2,10 @@ import re
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from typing import Callable, Dict, Final, List, Optional
+
 from src.schemas.pii import TextSpan
-from src.services.document_parser import CandidateCV, normalise
 from src.services.agents import PIIAgent
+from src.services.document_parser import CandidateCV, normalise
 from src.services.llm_client import InstructorClient
 
 # Keywords that should never be tagged under marital_or_family
@@ -209,6 +210,17 @@ class CompositePIIDetector(PIIDetector):
         return spans
 
 
+def _build_presidio_detector(_pii_client: Optional[InstructorClient]) -> PIIDetector:
+    # Imported lazily so importing this module never pulls in spacy/presidio
+    # (and their model-load cost) unless "presidio" is actually enabled in
+    # configs/pii_policy.yaml.
+    from src.config import load_presidio_config
+    from src.services.presidio_detector import DEFAULT_SCORE_THRESHOLD, PresidioPIIDetector
+
+    config = load_presidio_config()
+    return PresidioPIIDetector(score_threshold=config.get("score_threshold", DEFAULT_SCORE_THRESHOLD))
+
+
 # Canonical name -> factory for each known detector. This is the single
 # place that maps a configs/pii_policy.yaml detector name to a concrete
 # implementation; both the harness's pluggable registry (see
@@ -216,9 +228,16 @@ class CompositePIIDetector(PIIDetector):
 # nothing calls the harness, e.g. the web API) build from this map so a
 # name means the same thing everywhere instead of two hardcoded defaults
 # drifting apart.
+#
+# "presidio" ignores the pii_client argument entirely: it's a local
+# NER+regex detector (see presidio_detector.py) with no LLM in the loop, an
+# alternative to "model" rather than a replacement for it. Composed with
+# "regex" via configs/pii_policy.yaml or a task's `pii_detectors` override
+# (see tasks/pii_presidio_eval.yaml) to A/B against the model-based run.
 PII_DETECTOR_FACTORIES: Dict[str, Callable[[Optional[InstructorClient]], PIIDetector]] = {
     "regex": lambda _pii_client: RegexPIIDetector(),
     "model": lambda pii_client: ModelPIIDetector(PIIAgent(pii_client)),
+    "presidio": _build_presidio_detector,
 }
 
 

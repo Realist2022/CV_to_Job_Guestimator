@@ -1,12 +1,12 @@
 """Shared accessors for YAML-backed project configuration."""
 
-from pathlib import Path
 import math
+from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
 
-CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 
 load_dotenv(override=True)
 
@@ -62,3 +62,16 @@ def load_pii_detector_names() -> list[str]:
     if not isinstance(detectors, list) or not detectors:
         raise ValueError("configs/pii_policy.yaml must define a non-empty detectors list.")
     return list(detectors)
+
+
+def load_presidio_config() -> dict:
+    """Optional tuning block for the "presidio" detector (see pii_policy.yaml).
+
+    Absent entirely when that detector isn't enabled; defaults are applied
+    by PresidioPIIDetector itself, not here, so an empty/missing block is
+    always valid.
+    """
+    config = load_yaml("pii_policy.yaml").get("presidio") or {}
+    if not isinstance(config, dict):
+        raise ValueError("configs/pii_policy.yaml 'presidio' key must be a mapping.")
+    return config

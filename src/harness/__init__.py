@@ -1,7 +1,7 @@
-from .registry import Registry, pipelines, pii_detectors
-from .task_loader import TaskSpec, load_task
 from .evaluator import EvaluationReport, ThresholdEvaluator
+from .registry import Registry, pii_detectors, pipelines
 from .runner import HarnessRunner, HarnessRunReport
+from .task_loader import TaskSpec, load_task
 
 __all__ = [
     "Registry",

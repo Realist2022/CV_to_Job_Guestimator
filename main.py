@@ -79,12 +79,9 @@ def main():
             )
             print(f"  {span.step:<30} {span.duration_seconds:>6.2f}s{retry_note}")
         step_time_sum = round(sum(span.duration_seconds for span in pipeline_data.trace), 2)
-        overlap_saved = round(step_time_sum - pipeline_data.execution_seconds, 2)
         print(f"  {'-' * 38}")
         print(f"  {'Sum of step time':<30} {step_time_sum:>6.2f}s")
         print(f"  {'Actual wall time':<30} {pipeline_data.execution_seconds:>6.2f}s")
-        if overlap_saved > 0:
-            print(f"  (saved {overlap_saved:.2f}s by running independent steps concurrently)")
 
     if report.evaluation.checks:
         print("\nHARNESS EVALUATION")

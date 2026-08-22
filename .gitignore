@@ -33,6 +33,7 @@ Thumbs.db
 
 # Local run outputs
 artifacts/
+redacted_cvs/
 
 # Local/private source documents
 dataSet/
