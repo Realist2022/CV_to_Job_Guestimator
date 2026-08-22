@@ -3,3 +3,10 @@
 detectors:
   - regex
   - model
+
+# "presidio" (a local NER+regex detector, no LLM) is also registered and
+# can be swapped in here, or per-task via a task's `pii_detectors:` field
+# (see tasks/pii_presidio_eval.yaml) without touching this file. Tuning
+# for it, applied only when "presidio" is enabled:
+presidio:
+  score_threshold: 0.4

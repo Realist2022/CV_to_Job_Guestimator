@@ -81,6 +81,11 @@ class PipelineResult(BaseModel):
     overall_experience: OverallExperienceOutput
     scorecard: Scorecard
     metrics: PipelineMetrics
-    redacted_cv: str
+    redacted_cv_trace_id: UUID = Field(
+        description="trace_id of the IngestionPipeline run whose RedactedCV "
+        "this result was matched against (RedactedCV.ingestion_trace_id) — "
+        "not the redacted text itself, which already lives on that run's own "
+        "artifact (see IngestionArtifact)."
+    )
     pii_spans: list[TextSpan]
     trace: list[TraceSpan] = Field(default_factory=list)

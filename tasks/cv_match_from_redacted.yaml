@@ -1,0 +1,24 @@
+name: cv_match_from_redacted
+description: >
+  Standalone matching: reads a CV that was already redacted by a prior
+  "ingestion" task (see cv_ingest.yaml) straight out of CVIngestionStore —
+  no PII model runs here at all, and the raw CV is never touched by this
+  task. The redacted_cv_id below was produced by running cv_ingest.yaml
+  against dataSet/tradeMeCV/Sonny H Tapara CV.txt; regenerate it by running
+  that task again and copying the cv_id it reports if the fixture or PII
+  policy ever changes.
+pipeline: matching
+
+models:
+  # No models.pii: a matching-only task never calls a PII model — the CV
+  # arrived pre-redacted (see task_loader.py's ModelSelection).
+  evaluation: local-llama
+
+inputs:
+  job_listing:
+    - dataSet/tradeMeJobListing/Job_listing.txt
+    - dataSet/tradeMeJobListing/Job_listing.pdf
+  redacted_cv_id: "653ceb85b54215c079ef300a90e657a703c63832f727c9125957374ccccf6c69"
+
+evaluation:
+  min_final_relevance: 0

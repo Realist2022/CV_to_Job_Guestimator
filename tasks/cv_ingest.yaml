@@ -1,0 +1,26 @@
+name: cv_ingest
+description: >
+  Standalone ingestion: redacts the raw CV once and persists the result to
+  redacted_cvs/{cv_id}.json via CVIngestionStore. Run this once per CV, then
+  point any number of "matching" tasks (see cv_match_from_redacted.yaml) at
+  the cv_id it prints/logs, without ever re-touching the raw text.
+pipeline: ingestion
+
+models:
+  # No models.evaluation: an ingestion-only task never calls an evaluation
+  # model, so it's simply omitted (see task_loader.py's ModelSelection).
+  pii: local-llama
+
+pii_detectors:
+  - regex
+  - model
+
+inputs:
+  candidate_cv:
+    - dataSet/tradeMeCV/Sonny H Tapara CV.txt
+    - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
+
+evaluation:
+  # Only PII-shaped criteria apply here — there's no scorecard/skills
+  # result to check min_final_relevance/min_skills_match against.
+  min_pii_spans: 1

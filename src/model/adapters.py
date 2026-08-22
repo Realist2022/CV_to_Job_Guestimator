@@ -2,7 +2,7 @@
 
 import os
 
-from src.config_loader import load_model_config, load_pipeline_model_names
+from src.config import load_model_config, load_pipeline_model_names
 from src.model.model_registry import get_provider_class
 from src.services.llm_client import InstructorClient
 

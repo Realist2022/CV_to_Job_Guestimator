@@ -23,32 +23,33 @@ The default weights live in `configs/scoring.yaml` and can be overridden per tas
 
 ## Architecture
 
+Every run goes through the same five-stage harness — task loading, component resolution, a pipeline stage, evaluation, and artifact logging — but which pipeline stage runs depends on the task's `pipeline:` field. There are three shapes, and they can be run standalone or chained:
+
 ```text
 Task definition (tasks/*.yaml)
-	|-- pipeline name, model selection, input paths, pass/fail criteria
+	|-- pipeline: extraction | ingestion | matching
+	|-- model selection, input paths, pass/fail criteria
 				|
 				v
 HarnessRunner (src/harness/runner.py)
 	Loads configs/, resolves models and components from registries
 				|
-				v
-SourceDocument.from_pdf / from_path
-	Extracts PDF text with pypdf, falls back to PyMuPDF, then OCR
-				|
-				v
-ExtractionPipeline
-	Step 1: Detect and redact candidate CV PII
-	Step 2: Extract authoritative job requirements
-	Step 3: Match requirements against the redacted CV
-	Step 4: Extract relevant career history
+	  +---------+---------+---------+
+	  |                   |         |
+	  v                   v         v
+pipeline: ingestion  pipeline: extraction  pipeline: matching
+IngestionPipeline    (one-shot compat)     MatchingPipeline
+  Detect + redact       = ingestion          Extract job requirements
+  candidate CV PII       then matching       Match requirements vs.
+  -> RedactedCV,                             the redacted CV
+  saved to                                   Extract relevant career
+  CVIngestionStore                           history -> scorecard
+	  |                                          ^
+	  `---- redacted_cv_id -------- CVIngestionStore ---------'
 				|
 				v
 Pydantic schemas
 	Validate agent outputs, pipeline results, scorecards, and artifacts
-				|
-				v
-RelevanceScoringEngine
-	Calculates weighted scorecard
 				|
 				v
 ThresholdEvaluator
@@ -59,9 +60,11 @@ ArtifactLogger
 	Writes artifacts/run-000001_<engine>_<timestamp>_<run-id>.json
 ```
 
-The harness knows how to load a task, resolve components, run the pipeline, evaluate the result, and log an artifact. It contains no CV/job matching business logic; that stays in `src/services/` and `src/schemas/`.
+`ingestion` redacts a raw CV exactly once and persists the result (`redacted_cvs/<cv_id>.json`) via `CVIngestionStore`, so it never has to be redacted again. `matching` reads a previously-ingested `redacted_cv_id` and only ever sees redacted text — `src/services/matching_pipeline.py` doesn't import `CandidateCV` or a PII detector at all, so that boundary is enforced by the module's import graph, not just convention. `extraction` is the original one-shot path (raw CV in, full result out): it runs ingestion then matching back to back and persists the same `RedactedCV` either way, so a one-shot run gives the same on-disk guarantees as the two-task ingest-then-match flow.
 
-The web UI wraps the same pipeline with a drag-and-drop upload page and a `/api/compare` endpoint.
+The harness knows how to load a task, resolve components, run a pipeline stage, evaluate the result, and log an artifact. It contains no CV/job matching business logic; that stays in `src/services/` and `src/schemas/`.
+
+The web UI wraps the same pipelines with a drag-and-drop upload page and `/api/compare`, `/api/ingest`, and `/api/match` endpoints (see [Running the Web UI](#running-the-web-ui)).
 
 ### Entry Point
 
@@ -69,8 +72,8 @@ The web UI wraps the same pipeline with a drag-and-drop upload page and a `/api/
 
 1. Loads the task file (default `tasks/cv_job_match.yaml`, or pass a path: `uv run main.py tasks/model_eval.yaml`).
 2. `HarnessRunner` reads `configs/`, builds Instructor-backed clients from the named model configs, and composes the PII detectors.
-3. Loads the job listing and CV from the first existing path listed in the task.
-4. Runs the four-step extraction pipeline and computes the relevance report.
+3. Loads the job listing and/or CV from the first existing path listed in the task (an `ingestion` task only needs a CV; a `matching` task reads a `redacted_cv_id` instead of a raw CV).
+4. Runs the pipeline stage the task's `pipeline:` field selects and computes the relevance report (or, for `ingestion`, the PII redaction report).
 5. Evaluates the result against the task's criteria and prints PASS/FAIL checks.
 6. Saves a JSON artifact under `artifacts/` and prints a readable score summary.
 
@@ -78,31 +81,38 @@ The web UI wraps the same pipeline with a drag-and-drop upload page and a `/api/
 
 | Module | Responsibility |
 | --- | --- |
-| `src/harness/runner.py` | Loads configs, resolves components, runs a task end to end, and logs the artifact. |
-| `src/harness/task_loader.py` | Parses and validates task YAML into `TaskSpec` models. |
-| `src/harness/registry.py` | Name-to-factory registries for pipelines and PII detectors. |
+| `src/harness/runner.py` | Loads configs, resolves components, dispatches a task to the right pipeline shape, and logs the artifact. |
+| `src/harness/task_loader.py` | Parses and validates task YAML into `TaskSpec` models (`pipeline: extraction \| ingestion \| matching`). |
+| `src/harness/registry.py` | Name-to-factory registries for pipelines and PII detectors; enforces `PipelineProtocol` on anything registered as a pipeline. |
 | `src/harness/evaluator.py` | Checks pipeline results against task pass/fail thresholds. |
-| `src/harness/interfaces.py` | Protocols the harness requires from resolved components. |
+| `src/harness/interfaces.py` | The structural protocol the `pipelines` registry enforces. |
 | `src/model/providers.py` | Model providers (Ollama, OpenAI-compatible) that build LLM clients. |
 | `src/model/model_registry.py` | Maps provider names in `configs/llm.yaml` to provider classes. |
 | `src/model/adapters.py` | Turns a named model config into an `InstructorClient`, resolving API keys from the environment. |
-| `src/config_loader.py` | Loads YAML-backed project configuration and `.env` values. |
+| `src/config/loader.py` | Loads YAML-backed project configuration and `.env` values. |
 | `src/services/document_parser.py` | Defines source document types and extracts text from PDF files using `pypdf`, PyMuPDF fallback, and OCR fallback. |
 | `src/services/llm_client.py` | Wraps the OpenAI-compatible client with Instructor for structured Pydantic outputs. |
 | `src/services/agents.py` | Implements the PII, requirement extraction, skill matching, and overall experience agents. |
-| `src/services/pii_detector.py` | Combines regex and model-based PII detection before CV text reaches evaluation agents. |
-| `src/services/pipeline.py` | Orchestrates the end-to-end extraction, redaction, scoring, and pipeline result assembly. |
+| `src/services/pii_detector.py` | Regex and model-based PII detectors, composed into a `CompositePIIDetector`. |
+| `src/services/presidio_detector.py` | Local spaCy/Presidio NER-based PII detector — no LLM call, an alternative to the model-based detector. |
+| `src/services/ingestion_pipeline.py` | Standalone pipeline: redacts a raw CV once and produces a `RedactedCV`. |
+| `src/services/matching_pipeline.py` | Standalone pipeline: matches a `RedactedCV` against a job listing. Never imports `CandidateCV` or a PII detector. |
+| `src/services/extraction_pipeline.py` | One-shot compatibility wrapper: runs ingestion then matching and returns one combined result. |
+| `src/services/cv_store.py` | Content-addressed persistence for `RedactedCV`s (`redacted_cvs/<cv_id>.json`), keyed by a hash of the normalised raw text. |
+| `src/services/ingestion_persistence.py` | Shared "save the `RedactedCV`, log its `IngestionArtifact`" helper used by both the harness and the API. |
+| `src/services/pipeline_tracing.py` | Shared step-timing context manager pipelines use to build their `TraceSpan` lists. |
+| `src/services/scoring_engine.py` | Converts structured outputs into the weighted relevance scorecard. |
 | `src/prompts/templates.py` | Stores the system prompts for each agent step. |
 | `src/schemas/pii.py` | Defines PII span schemas. |
 | `src/schemas/requirements.py` | Defines job requirement, skill evaluation, and skill match result schemas. |
 | `src/schemas/experience.py` | Defines overall experience schemas. |
 | `src/schemas/scoring.py` | Defines scorecard schemas. |
-| `src/schemas/pipeline.py` | Defines pipeline result and metrics schemas. |
-| `src/schemas/artifact.py` | Defines the saved run artifact format. |
-| `src/services/scoring_engine.py` | Converts structured outputs into the weighted relevance scorecard. |
+| `src/schemas/pipeline.py` | Defines pipeline result, metrics, and trace-span schemas. |
+| `src/schemas/ingestion.py` | Defines `RedactedCV` and `IngestionResult` — the only CV representation `matching` is allowed to consume. |
+| `src/schemas/artifact.py` | Defines the saved run/ingestion artifact formats and their config snapshots. |
 | `src/utils/artifact_logger.py` | Serializes each run to a timestamped JSON file. |
 | `src/api/app.py` | Builds the FastAPI app and serves the web UI. |
-| `src/api/routes.py` | Implements the `/api/compare` upload endpoint. |
+| `src/api/routes.py` | Implements the `/api/compare`, `/api/ingest`, and `/api/match` endpoints. |
 | `src/api/schemas.py` | Typed response models for the API. |
 | `src/web_app.py` | Backwards-compatible shim re-exporting the app from `src/api/app.py`. |
 | `web/index.html` | Browser UI for uploading a job listing and CV, running comparison, and viewing results. |
@@ -111,21 +121,31 @@ The web UI wraps the same pipeline with a drag-and-drop upload page and a `/api/
 
 Runs are described declaratively:
 
-- `configs/llm.yaml` defines named model configurations (provider, model, base URL, API key or `api_key_env`, temperature). It ships with `gemini-flash`, `local-llama`, and a placeholder for a fine-tuned `cv-guestimator-lora` build.
+- `configs/llm.yaml` defines named model configurations (provider, model, base URL, API key or `api_key_env`, temperature). It ships with `gemini-flash`, a few local Ollama models for A/B testing (`local-llama`, `local-llama-1b`, `local-deepseek-1.5b`), and a placeholder for a fine-tuned `cv-guestimator-lora` build.
 - `configs/scoring.yaml` holds the default scoring weights.
-- `configs/pii_policy.yaml` lists which PII detectors compose the composite detector, in order.
-- `configs/pipeline.yaml` holds pipeline runtime defaults such as verbosity.
+- `configs/pii_policy.yaml` lists which PII detectors compose the composite detector, in order — `regex` and `model` by default, with a local NER-based `presidio` detector (no LLM call) also registered and available to swap in project-wide or per task.
+- `configs/pipeline.yaml` holds pipeline runtime defaults such as verbosity and the default model selection.
 - `configs/deployment.yaml` documents ports and image names used by Docker.
 
-Tasks under `tasks/` pick the pipeline, models, inputs, and evaluation thresholds:
+Tasks under `tasks/` pick the pipeline shape, models, inputs, and evaluation thresholds. A task's `pipeline:` field is one of:
 
-| Task | Purpose |
-| --- | --- |
-| `tasks/cv_job_match.yaml` | Full comparison with the cloud evaluation model. |
-| `tasks/pii_redaction.yaml` | Fully local run that asserts PII spans were actually redacted. |
-| `tasks/model_eval.yaml` | Benchmarks a candidate model against pass/fail thresholds. |
+| Pipeline | Reads | Produces | Calls a PII model? |
+| --- | --- | --- | --- |
+| `extraction` | a raw CV path + job listing | a full match result | yes |
+| `ingestion` | a raw CV path | a `RedactedCV`, persisted via `CVIngestionStore` | yes |
+| `matching` | a `redacted_cv_id` + job listing | a full match result | no — the CV already arrived redacted |
 
-A task looks like:
+| Task | Pipeline | Purpose |
+| --- | --- | --- |
+| `tasks/cv_job_match.yaml` | `extraction` | Full comparison with the cloud evaluation model. |
+| `tasks/cv_ingest.yaml` | `ingestion` | Redacts a raw CV once and persists it, printing the `cv_id` to reuse. |
+| `tasks/cv_match_from_redacted.yaml` | `matching` | Matches a job listing against a previously-ingested `redacted_cv_id`, with no PII model call. |
+| `tasks/pii_redaction.yaml` | `extraction` | Fully local run that asserts PII spans were actually redacted. |
+| `tasks/pii_presidio_eval.yaml` | `extraction` | Same documents, PII redaction routed through `presidio` instead of `model`, to A/B coverage. |
+| `tasks/pii_1b_eval.yaml` / `tasks/pii_deepseek_eval.yaml` | `extraction` | A/B a smaller/alternate local PII model's latency and retry ("attempts") behavior. |
+| `tasks/model_eval.yaml` | `extraction` | Benchmarks a candidate evaluation model against pass/fail thresholds. |
+
+An `extraction` task looks like:
 
 ```yaml
 name: cv_job_match
@@ -144,7 +164,7 @@ evaluation:
   min_final_relevance: 0
 ```
 
-The first existing path in each input list wins, so TXT files take precedence over PDFs.
+The first existing path in each input list wins, so TXT files take precedence over PDFs. An `ingestion` task omits `models.evaluation` and `inputs.job_listing`; a `matching` task omits `models.pii` and `inputs.candidate_cv`, setting `inputs.redacted_cv_id` instead (see `tasks/cv_ingest.yaml` / `tasks/cv_match_from_redacted.yaml` for both). `.vscode/task.schema.json` gives editor validation for all three shapes — regenerate it after changing `TaskSpec` with `uv run python scripts/gen_task_schema.py`.
 
 ## Model Configuration
 
@@ -252,7 +272,15 @@ The page accepts one job listing and one candidate CV. Each upload can be either
 - `.pdf` for normal PDF upload.
 - `.txt` for pasted or pre-extracted text, which is useful when a job site produces a visually readable PDF that automated PDF libraries cannot extract.
 
-The compare endpoint writes the same artifact JSON files under `artifacts/` as the CLI.
+Three endpoints mirror the harness's three pipeline shapes:
+
+| Endpoint | Mirrors | Behavior |
+| --- | --- | --- |
+| `POST /api/compare` | `pipeline: extraction` | Job listing + raw CV in, full match result out. Also persists the redacted CV and its `IngestionArtifact` the same way `/api/ingest` does. |
+| `POST /api/ingest` | `pipeline: ingestion` | Raw CV in, `cv_id` out. The response never carries PII spans or redacted text — only a count — since that's exactly what this endpoint exists to keep off the wire. |
+| `POST /api/match` | `pipeline: matching` | Job listing + a previously-returned `cv_id` in, full match result out. No PII model is called — the CV arrives already redacted. |
+
+All three write the same artifact JSON files under `artifacts/` as the CLI.
 
 ## Docker
 
@@ -284,11 +312,19 @@ Date ranges are expected in `YYYY-MM` format. Values such as `Present`, `Current
 
 ## Tests
 
-The test suite covers artifact logging, pipeline privacy/redaction behavior, requirement scoring, document parsing, the web API, and the harness (task loading, registries, and threshold evaluation). Run it from an environment that has `pytest` installed:
+The test suite covers artifact logging, pipeline privacy/redaction behavior, the ingestion/matching split (including that `matching_pipeline.py` never imports `CandidateCV` or a PII detector), requirement scoring, document parsing, both PII detectors (model-based and `presidio`), the web API, and the harness (task loading, registries, and threshold evaluation). Shared test doubles and builders (a fake LLM client, a schema-valid `PipelineResult` factory) live in `tests/factories.py`, a plain importable module rather than a pytest-fixture-only `conftest.py`, since the suite mixes `unittest.TestCase` classes with plain pytest functions.
 
 ```powershell
 uv run pytest
 ```
+
+### Linting
+
+```powershell
+uv run ruff check .
+```
+
+Configured narrowly for now (`F` for real mistakes, `I` for import order — see `[tool.ruff.lint]` in `pyproject.toml`); `mypy` is also available (`uv run mypy src`) but not yet wired into CI. `.github/workflows/ci.yml` runs both `ruff check` and `pytest` on every pull request.
 
 ## Privacy and Git Hygiene
 
@@ -298,6 +334,7 @@ The repository is configured to ignore:
 - `.venv/` for local Python environments.
 - `dataSet/` for private PDFs and source documents.
 - `artifacts/` for generated run traces.
+- `redacted_cvs/` for persisted `RedactedCV`s from `ingestion` runs — redacted text only, never raw PII, but still local-only run output.
 - Python caches and test/coverage outputs.
 
 
@@ -309,6 +346,11 @@ The repository is configured to ignore:
 |-- pyproject.toml
 |-- README.md
 |-- docker-compose.yml
+|-- .github/
+|   `-- workflows/
+|       `-- ci.yml            # ruff + pytest on every PR
+|-- scripts/
+|   `-- gen_task_schema.py    # regenerates .vscode/task.schema.json from TaskSpec
 |-- configs/
 |   |-- deployment.yaml
 |   |-- llm.yaml
@@ -317,12 +359,19 @@ The repository is configured to ignore:
 |   `-- scoring.yaml
 |-- tasks/
 |   |-- cv_job_match.yaml
+|   |-- cv_ingest.yaml
+|   |-- cv_match_from_redacted.yaml
 |   |-- model_eval.yaml
-|   `-- pii_redaction.yaml
+|   |-- pii_redaction.yaml
+|   |-- pii_presidio_eval.yaml
+|   |-- pii_1b_eval.yaml
+|   `-- pii_deepseek_eval.yaml
 |-- src/
 |   |-- __init__.py
-|   |-- config.py
 |   |-- web_app.py        # compatibility shim for src.api.app
+|   |-- config/
+|   |   |-- __init__.py
+|   |   `-- loader.py
 |   |-- api/
 |   |   |-- __init__.py
 |   |   |-- app.py
@@ -346,7 +395,9 @@ The repository is configured to ignore:
 |   |-- schemas/
 |   |   |-- __init__.py
 |   |   |-- artifact.py
+|   |   |-- evaluation.py
 |   |   |-- experience.py
+|   |   |-- ingestion.py
 |   |   |-- pii.py
 |   |   |-- pipeline.py
 |   |   |-- requirements.py
@@ -354,10 +405,16 @@ The repository is configured to ignore:
 |   |-- services/
 |   |   |-- __init__.py
 |   |   |-- agents.py
+|   |   |-- cv_store.py
 |   |   |-- document_parser.py
+|   |   |-- extraction_pipeline.py
+|   |   |-- ingestion_persistence.py
+|   |   |-- ingestion_pipeline.py
 |   |   |-- llm_client.py
+|   |   |-- matching_pipeline.py
 |   |   |-- pii_detector.py
-|   |   |-- pipeline.py
+|   |   |-- pipeline_tracing.py
+|   |   |-- presidio_detector.py
 |   |   `-- scoring_engine.py
 |   `-- utils/
 |       |-- __init__.py
@@ -375,12 +432,16 @@ The repository is configured to ignore:
 |   `-- ollama/
 |       `-- Modelfile
 |-- tests/
+|   |-- factories.py
 |   |-- test_artifact_logger.py
 |   |-- test_document_parser.py
 |   |-- test_harness.py
+|   |-- test_ingestion_split.py
 |   |-- test_pipeline_privacy.py
+|   |-- test_presidio_detector.py
 |   |-- test_requirement_scoring.py
 |   `-- test_web_app.py
 |-- dataSet/       # Local only, ignored by Git
+|-- redacted_cvs/  # Generated, ignored by Git
 `-- artifacts/     # Generated, ignored by Git
 ```

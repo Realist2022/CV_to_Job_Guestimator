@@ -1,7 +1,8 @@
+from typing import Any, Type
+
 import instructor
 from openai import OpenAI
 from pydantic import BaseModel
-from typing import Type, Any
 
 
 class InstructorClient:

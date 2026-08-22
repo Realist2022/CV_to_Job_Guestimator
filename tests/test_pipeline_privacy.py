@@ -11,6 +11,7 @@ from src.schemas.pii import PIIOutput
 from src.schemas.requirements import JobRequirementsOutput
 from src.services.agents import PIIAgent
 from src.services.document_parser import CandidateCV, JobListing
+from src.services.extraction_pipeline import ExtractionPipeline
 from src.services.pii_detector import (
     CompositePIIDetector,
     ModelPIIDetector,
@@ -18,23 +19,7 @@ from src.services.pii_detector import (
     build_pii_detector,
     is_valid_pii_span,
 )
-from src.services.extraction_pipeline import ExtractionPipeline
-
-
-class RecordingClient:
-    def __init__(self, model, responses):
-        self.model = model
-        self.responses = responses
-        self.requests = []
-        self.last_attempts = None
-
-    def complete(self, system_prompt, user_prompt, response_model, max_retries=2):
-        self.requests.append((system_prompt, user_prompt))
-        self.last_attempts = 1
-        response = self.responses[system_prompt]
-        if callable(response):
-            return response(response_model)
-        return response
+from tests.factories import RecordingClient
 
 
 class ExtractionPipelinePrivacyTest(unittest.TestCase):
@@ -95,23 +80,29 @@ class ExtractionPipelinePrivacyTest(unittest.TestCase):
         self.assertEqual(result.scorecard.final_relevance, 100.0)
         self.assertTrue(result.scorecard.pillar_b.applicable)
         self.assertEqual(len(evaluation_client.requests), 3)
-        steps = [span.step for span in result.trace]
-        # pii_redaction and job_requirements_extraction run concurrently, so
-        # either may finish first; everything after them is still sequential.
-        self.assertEqual(set(steps[:2]), {"pii_redaction", "job_requirements_extraction"})
+        # Deterministic now: ingestion (ExtractionPipeline's compatibility
+        # wrapper, see extraction_pipeline.py) always runs to completion
+        # before matching starts, so pii_redaction is always first.
         self.assertEqual(
-            steps[2:],
-            ["skill_matching", "overall_experience_extraction", "scoring"],
+            [span.step for span in result.trace],
+            [
+                "pii_redaction",
+                "job_requirements_extraction",
+                "skill_matching",
+                "overall_experience_extraction",
+                "scoring",
+            ],
         )
         self.assertTrue(all(span.duration_seconds >= 0.0 for span in result.trace))
 
     def test_local_pii_failure_prevents_cv_data_from_reaching_cloud(self):
-        # Step 1 (PII) and step 2 (job requirements) run concurrently and
-        # are independent, so step 2's cloud call may already be in flight
-        # when step 1 then fails. That's fine because step 2 only ever
-        # sees the job listing. What must still hold is that no step which
-        # needs the redacted CV (skill matching, overall experience) ever
-        # runs, so no CV-derived content reaches the cloud.
+        # ExtractionPipeline now runs ingestion (PII) to completion before
+        # matching starts (see extraction_pipeline.py's module docstring
+        # for the trade-off this makes vs. the old concurrent version).
+        # That means a PII failure aborts before *any* cloud call happens —
+        # not just before the CV-dependent ones — since job requirements
+        # extraction is part of MatchingPipeline, which never runs at all
+        # if ingestion raises first.
         pii_client = RecordingClient(
             "llama3.2:latest",
             {PII_SYSTEM_PROMPT: None},
@@ -135,10 +126,7 @@ class ExtractionPipelinePrivacyTest(unittest.TestCase):
                 verbose=False,
             )
 
-        cloud_prompts_seen = {system for system, _ in evaluation_client.requests}
-        self.assertEqual(cloud_prompts_seen, {JOB_REQUIREMENTS_SYSTEM_PROMPT})
-        cloud_prompts = "\n".join(prompt for _, prompt in evaluation_client.requests)
-        self.assertNotIn("Jane Doe", cloud_prompts)
+        self.assertEqual(evaluation_client.requests, [])
 
     def test_model_pii_guard_keeps_employer_and_employment_dates(self):
         pii_client = RecordingClient(

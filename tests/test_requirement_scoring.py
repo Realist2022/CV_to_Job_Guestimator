@@ -5,8 +5,7 @@ from src.schemas.requirements import (
     JobRequirement,
     SkillMatchResult,
 )
-from src.services.agents import SkillMatcherAgent
-from src.services.agents import OverallExperienceAgent
+from src.services.agents import OverallExperienceAgent, SkillMatcherAgent
 from src.services.document_parser import CandidateCV, JobListing
 from src.services.scoring_engine import RelevanceScoringEngine
 

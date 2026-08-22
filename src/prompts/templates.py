@@ -2,7 +2,6 @@ from typing import Final
 
 from src.schemas.pii import PIIKind
 
-
 JOB_REQUIREMENTS_SYSTEM_PROMPT: Final = """Extract atomic technical and operational skill_names from a job description.
 
 Include specific domain tools, machinery, software, methodologies, frameworks, certifications, and technical skill_names.

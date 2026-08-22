@@ -1,11 +1,24 @@
 import os
-from pathlib import Path
 import re
 import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable, TypeVar
+from uuid import UUID
 
+from pydantic import BaseModel
+
+from src.schemas.artifact import (
+    IngestionArtifact,
+    IngestionRunConfig,
+    RunArtifact,
+    RunConfig,
+)
 from src.schemas.evaluation import EvaluationReport
-from src.schemas.artifact import RunArtifact, RunConfig
+from src.schemas.ingestion import IngestionResult
 from src.schemas.pipeline import PipelineResult
+
+_ArtifactT = TypeVar("_ArtifactT", bound=BaseModel)
 
 
 class ArtifactLogger:
@@ -23,12 +36,43 @@ class ArtifactLogger:
         evaluation: EvaluationReport | None = None,
         config: RunConfig | None = None,
     ) -> str:
+        return self._log(
+            build=lambda run_number: RunArtifact.from_pipeline_result(
+                result, run_number, evaluation, config
+            ),
+            engine_name=result.engine,
+            trace_id=result.trace_id,
+        )
+
+    def log_ingestion_run(
+        self,
+        result: IngestionResult,
+        evaluation: EvaluationReport | None = None,
+        config: IngestionRunConfig | None = None,
+    ) -> str:
+        return self._log(
+            build=lambda run_number: IngestionArtifact.from_ingestion_result(
+                result, run_number, evaluation, config
+            ),
+            engine_name=result.pii_engine,
+            trace_id=result.trace_id,
+        )
+
+    def _log(
+        self,
+        build: Callable[[int], _ArtifactT],
+        engine_name: str,
+        trace_id: UUID,
+    ) -> str:
         run_number, reservation_path = self._reserve_run_number()
         try:
-            artifact = RunArtifact.from_pipeline_result(
-                result, run_number, evaluation, config
+            artifact = build(run_number)
+            out_path = self._write_artifact(
+                artifact,
+                run_number=run_number,
+                engine_name=engine_name,
+                trace_id=trace_id,
             )
-            out_path = self._write_artifact(artifact)
             self.last_run_number = run_number
             return out_path
         finally:
@@ -57,17 +101,20 @@ class ArtifactLogger:
             os.close(descriptor)
             return candidate, reservation_path
 
-    def _write_artifact(self, artifact: RunArtifact) -> str:
-        safe_engine_name = re.sub(
-            r"[^A-Za-z0-9._-]+", "_", artifact.metadata.engine
-        ).strip("._") or "unknown-engine"
-        timestamp = artifact.metadata.timestamp.strftime("%Y%m%dT%H%M%S.%fZ")
+    def _write_artifact(
+        self,
+        artifact: BaseModel,
+        run_number: int,
+        engine_name: str,
+        trace_id: UUID,
+    ) -> str:
+        safe_engine_name = re.sub(r"[^A-Za-z0-9._-]+", "_", engine_name).strip("._") or "unknown-engine"
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         # trace_id is a time-ordered UUIDv7, so its leading hex digits are
         # mostly timestamp and don't add much filename entropy; the tail is
         # its random portion, so use that for a short unique-looking suffix.
         filename = (
-            f"run-{artifact.metadata.run_number:06d}_{safe_engine_name}_"
-            f"{timestamp}_{str(artifact.metadata.trace_id)[-8:]}.json"
+            f"run-{run_number:06d}_{safe_engine_name}_" f"{timestamp}_{str(trace_id)[-8:]}.json"
         )
         out_path = self.output_dir / filename
         temporary_path: Path | None = None

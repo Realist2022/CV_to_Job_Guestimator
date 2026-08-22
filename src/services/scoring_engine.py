@@ -1,10 +1,10 @@
-from datetime import datetime
 import re
+from datetime import datetime
 from typing import Optional
 
 from dateutil import parser as date_parser
 
-from src.config_loader import load_scoring_weights
+from src.config import load_scoring_weights
 from src.schemas.experience import OverallExperienceOutput
 from src.schemas.requirements import SkillMatchResult
 from src.schemas.scoring import Scorecard

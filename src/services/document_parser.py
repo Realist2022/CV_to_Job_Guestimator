@@ -1,9 +1,10 @@
-import re
-import io
 import contextlib
+import io
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
+
 from src.schemas.pii import TextSpan
 
 

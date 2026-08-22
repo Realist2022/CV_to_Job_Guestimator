@@ -2,63 +2,50 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from src.schemas.experience import OverallExperienceOutput
-from src.schemas.pipeline import PipelineMetrics, PipelineResult
+from src.schemas.ingestion import IngestionResult, RedactedCV
 from src.schemas.pii import TextSpan
-from src.schemas.requirements import SkillMatchResult
-from src.schemas.scoring import Scorecard
+from src.services.cv_store import CVNotFoundError
 from src.web_app import app
+from tests.factories import build_pipeline_result
 
 
 class FakePipeline:
     def __init__(self, *_args, **_kwargs):
         pass
 
-    def run(self, listing, cv, *, verbose=True):
+    def run(self, listing, cv, *, verbose=True, on_ingested=None):
         assert "React" in listing.text
         assert "React" in cv.text
-        return PipelineResult(
-            engine="fake-eval",
-            pii_engine="fake-pii",
-            execution_seconds=0.01,
-            skills_eval=SkillMatchResult(
-                job_requirements=[{"skill_name": "React"}],
-                matched_cv_skills=["React"],
-                missing_cv_skills=[],
-                rationale="React is present.",
-            ),
-            overall_experience=OverallExperienceOutput(
-                target_job_title="Full Stack Developer",
-                target_overall_years=2.0,
-                candidate_roles=[],
-            ),
-            scorecard=Scorecard(
-                final_relevance=45.0,
-                pillar_a={"score": 100.0, "raw": "1/1 skills"},
-                pillar_b={
-                    "score": 0.0,
-                    "raw": "No relevant roles",
-                    "applicable": False,
-                },
-                counted_roles=[],
-            ),
-            metrics=PipelineMetrics(
-                total_requirements=1,
-                total_matched=1,
-                match_percentage=100.0,
-                final_relevance=45.0,
-            ),
-            redacted_cv="React developer",
-            pii_spans=[TextSpan(kind="person_name", text="Jane Doe")],
-        )
+        if on_ingested is not None:
+            redacted_cv = RedactedCV.from_raw_text(
+                raw_text=cv.text,
+                redacted_text=cv.text,
+                pii_spans=[],
+                pii_engine="fake-pii",
+            )
+            on_ingested(
+                IngestionResult(
+                    cv_id=redacted_cv.cv_id,
+                    pii_engine="fake-pii",
+                    execution_seconds=0.01,
+                    pii_spans=[],
+                    redacted_cv=redacted_cv,
+                )
+            )
+        return build_pipeline_result(execution_seconds=0.01, pillar_b_applicable=False)
 
 
 class FakeLogger:
     def __init__(self, *_args, **_kwargs):
-        pass
+        self.last_run_number = None
 
     def log_run(self, _result, config=None):
+        self.last_run_number = 1
         return "artifacts/run-test.json"
+
+    def log_ingestion_run(self, _result, config=None, evaluation=None):
+        self.last_run_number = 1
+        return "artifacts/run-ingest-test.json"
 
 
 class FakeClient:
@@ -70,6 +57,12 @@ class FakeClient:
 def test_compare_endpoint_accepts_text_uploads_without_real_model_calls(monkeypatch):
     monkeypatch.setattr("src.api.routes.ExtractionPipeline", FakePipeline)
     monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeLogger)
+    # /api/compare's on_ingested hook persists through
+    # src.services.ingestion_persistence.persist_ingestion, not routes.py's
+    # own CVIngestionStore/ArtifactLogger names — patch it there too, or
+    # this "without_real_model_calls" test silently writes real files.
+    monkeypatch.setattr("src.services.ingestion_persistence.CVIngestionStore", FakeCVIngestionStore)
+    monkeypatch.setattr("src.services.ingestion_persistence.ArtifactLogger", FakeLogger)
     monkeypatch.setattr(
         "src.api.routes.client_for_role",
         lambda role: FakeClient(model=f"fake-{role}"),
@@ -105,6 +98,149 @@ def test_compare_endpoint_rejects_unsupported_uploads():
 
     assert response.status_code == 400
     assert "must be a PDF or TXT" in response.json()["detail"]
+
+
+class FakeIngestionPipeline:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def run(self, cv, *, verbose=True):
+        assert "Jane Doe" in cv.text
+        redacted_cv = RedactedCV.from_raw_text(
+            raw_text=cv.text,
+            redacted_text=cv.text.replace("Jane Doe", "[PERSON_NAME]"),
+            pii_spans=[TextSpan(kind="person_name", text="Jane Doe")],
+            pii_engine="fake-pii",
+        )
+        return IngestionResult(
+            cv_id=redacted_cv.cv_id,
+            pii_engine="fake-pii",
+            execution_seconds=0.01,
+            pii_spans=redacted_cv.pii_spans,
+            redacted_cv=redacted_cv,
+        )
+
+
+class FakeCVIngestionStore:
+    saved: dict = {}
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def save(self, redacted_cv):
+        FakeCVIngestionStore.saved[redacted_cv.cv_id] = redacted_cv
+        return f"redacted_cvs/{redacted_cv.cv_id}.json"
+
+    def load(self, cv_id):
+        try:
+            return FakeCVIngestionStore.saved[cv_id]
+        except KeyError:
+            raise CVNotFoundError(f"No ingested CV found for cv_id '{cv_id}'.") from None
+
+
+class FakeMatchingPipeline:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def run(self, listing, redacted_cv, *, verbose=True):
+        assert "React" in listing.text
+        assert "[PERSON_NAME]" in redacted_cv.text
+        return build_pipeline_result(
+            pii_engine=redacted_cv.pii_engine,
+            execution_seconds=0.01,
+            pillar_b_applicable=False,
+            redacted_cv_trace_id=redacted_cv.ingestion_trace_id,
+            pii_spans=redacted_cv.pii_spans,
+        )
+
+
+class FakeArtifactLogger:
+    def __init__(self, *_args, **_kwargs):
+        self.last_run_number = None
+
+    def log_run(self, _result, config=None, evaluation=None):
+        self.last_run_number = 1
+        return "artifacts/run-test.json"
+
+    def log_ingestion_run(self, _result, config=None, evaluation=None):
+        self.last_run_number = 1
+        return "artifacts/run-ingest-test.json"
+
+
+def test_ingest_endpoint_persists_redacted_cv_and_returns_cv_id(monkeypatch):
+    monkeypatch.setattr("src.api.routes.IngestionPipeline", FakeIngestionPipeline)
+    # /api/ingest persists through
+    # src.services.ingestion_persistence.persist_ingestion, so that's where
+    # CVIngestionStore/ArtifactLogger need patching, not routes.py.
+    monkeypatch.setattr("src.services.ingestion_persistence.CVIngestionStore", FakeCVIngestionStore)
+    monkeypatch.setattr("src.services.ingestion_persistence.ArtifactLogger", FakeArtifactLogger)
+    monkeypatch.setattr(
+        "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/ingest",
+        files={"candidate_cv": ("cv.txt", b"Jane Doe\nReact developer", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["artifact_path"] == "artifacts/run-ingest-test.json"
+    assert payload["pii_span_count"] == 1
+    assert "cv_id" in payload
+    # The raw PII value never appears anywhere in the ingest response.
+    assert "Jane Doe" not in response.text
+
+
+def test_match_endpoint_uses_previously_ingested_cv_with_no_pii_call(monkeypatch):
+    monkeypatch.setattr("src.api.routes.IngestionPipeline", FakeIngestionPipeline)
+    # /api/match's own CVIngestionStore().load(cv_id)/ArtifactLogger().log_run
+    # live in routes.py, but /api/ingest's save happens through
+    # src.services.ingestion_persistence.persist_ingestion — both need
+    # patching to the same FakeCVIngestionStore so the two calls share state.
+    monkeypatch.setattr("src.api.routes.CVIngestionStore", FakeCVIngestionStore)
+    monkeypatch.setattr("src.services.ingestion_persistence.CVIngestionStore", FakeCVIngestionStore)
+    monkeypatch.setattr("src.services.ingestion_persistence.ArtifactLogger", FakeArtifactLogger)
+    monkeypatch.setattr("src.api.routes.MatchingPipeline", FakeMatchingPipeline)
+    monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeArtifactLogger)
+    monkeypatch.setattr(
+        "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
+    )
+
+    client = TestClient(app)
+    ingest_response = client.post(
+        "/api/ingest",
+        files={"candidate_cv": ("cv.txt", b"Jane Doe\nReact developer", "text/plain")},
+    )
+    cv_id = ingest_response.json()["cv_id"]
+
+    match_response = client.post(
+        "/api/match",
+        files={"job_listing": ("job.txt", b"Requirements\nReact", "text/plain")},
+        data={"cv_id": cv_id},
+    )
+
+    assert match_response.status_code == 200
+    payload = match_response.json()
+    assert payload["artifact_path"] == "artifacts/run-test.json"
+    assert payload["skills_evaluation"]["matched_cv_skills"] == ["React"]
+
+
+def test_match_endpoint_rejects_unknown_cv_id(monkeypatch):
+    monkeypatch.setattr("src.api.routes.CVIngestionStore", FakeCVIngestionStore)
+    monkeypatch.setattr(
+        "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/match",
+        files={"job_listing": ("job.txt", b"Requirements\nReact", "text/plain")},
+        data={"cv_id": "never-ingested"},
+    )
+
+    assert response.status_code == 400
 
 
 def test_web_ui_renders_requirement_skill_names():

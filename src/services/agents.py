@@ -1,11 +1,20 @@
 import json
 import re
 from typing import List, Optional, Type
+
 from pydantic import create_model, model_validator
-from src.schemas.experience import (
-    OverallExperienceResponse,
-    OverallExperienceOutput,
+
+from src.prompts.templates import (
+    JOB_REQUIREMENTS_SYSTEM_PROMPT,
+    OVERALL_EXPERIENCE_SYSTEM_PROMPT,
+    PII_SYSTEM_PROMPT,
+    SKILL_MATCHER_SYSTEM_PROMPT,
 )
+from src.schemas.experience import (
+    OverallExperienceOutput,
+    OverallExperienceResponse,
+)
+from src.schemas.ingestion import RedactedCV
 from src.schemas.pii import PIIOutput
 from src.schemas.requirements import (
     JobRequirement,
@@ -13,17 +22,10 @@ from src.schemas.requirements import (
     SkillEvaluationDecision,
     SkillEvaluationOutput,
 )
-from src.prompts.templates import (
-    JOB_REQUIREMENTS_SYSTEM_PROMPT,
-    OVERALL_EXPERIENCE_SYSTEM_PROMPT,
-    PII_SYSTEM_PROMPT,
-    SKILL_MATCHER_SYSTEM_PROMPT,
-)
-from src.services.document_parser import JobListing, CandidateCV
+from src.services.document_parser import CandidateCV, JobListing
 from src.services.llm_client import InstructorClient
 
-
-_skill_name_ALIASES = {
+_SKILL_NAME_ALIASES = {
     "react": ("react", "react.js", "reactjs"),
     "node.js": ("node.js", "nodejs", "node js"),
     "javascript or typescript": ("javascript", "typescript"),
@@ -45,7 +47,7 @@ _ROLE_LINE_PATTERN = re.compile(r"^\s*Role:\s*(?P<title>.+?)\s*$", re.IGNORECASE
 
 
 def _aliases_for(skill_name: str) -> tuple[str, ...]:
-    return _skill_name_ALIASES.get(skill_name.strip().casefold(), (skill_name,))
+    return _SKILL_NAME_ALIASES.get(skill_name.strip().casefold(), (skill_name,))
 
 
 def _contains_skill_name(text: str, skill_name: str) -> bool:
@@ -171,7 +173,7 @@ class SkillMatcherAgent:
         self.client = client
 
     def run(
-        self, job_requirements: List[JobRequirement], cv: CandidateCV
+        self, job_requirements: List[JobRequirement], cv: RedactedCV
     ) -> Optional[SkillEvaluationOutput]:
         response_model = _constrained_evaluation_model(job_requirements)
         requirements = json.dumps(
@@ -227,7 +229,7 @@ class OverallExperienceAgent:
         self.client = client
 
     def run(
-        self, listing: JobListing, cv: CandidateCV
+        self, listing: JobListing, cv: RedactedCV
     ) -> Optional[OverallExperienceOutput]:
         user_message = (
             f"JOB DESCRIPTION:\n{listing.text}\n\nCANDIDATE CV:\n{cv.text}"

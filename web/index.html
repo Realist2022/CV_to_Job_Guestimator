@@ -87,12 +87,62 @@
       transform: translateY(-2px);
     }
 
+    .dropzone.saved {
+      border-style: solid;
+      border-color: var(--accent);
+      background: var(--panel);
+    }
+
     .dropzone input {
       position: absolute;
       inset: 0;
       opacity: 0;
       cursor: pointer;
     }
+
+    .dropzone-col {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .cv-save-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 20px;
+    }
+
+    button.secondary {
+      background: transparent;
+      color: var(--accent-strong);
+      border: 1px solid var(--line);
+      padding: 9px 14px;
+      font-weight: 700;
+    }
+
+    button.secondary:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .link-button {
+      background: none;
+      border: 0;
+      padding: 0;
+      color: var(--muted);
+      font: inherit;
+      font-weight: 700;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .save-status {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .save-status.error { color: var(--warning); }
 
     .eyebrow {
       color: var(--accent-strong);
@@ -291,12 +341,19 @@
         <span class="filename" id="jobName">No file selected</span>
       </label>
 
-      <label class="dropzone" data-zone="cv">
-        <input id="cvFile" type="file" accept=".pdf,.txt,application/pdf,text/plain">
-        <span class="eyebrow">Candidate CV</span>
-        <h2>Drop PDF or TXT</h2>
-        <span class="filename" id="cvName">No file selected</span>
-      </label>
+      <div class="dropzone-col">
+        <label class="dropzone" data-zone="cv" id="cvZone">
+          <input id="cvFile" type="file" accept=".pdf,.txt,application/pdf,text/plain">
+          <span class="eyebrow">Candidate CV</span>
+          <h2 id="cvHeading">Drop PDF or TXT</h2>
+          <span class="filename" id="cvName">No file selected</span>
+        </label>
+        <div class="cv-save-row">
+          <button type="button" id="saveCvButton" class="secondary" disabled>Save CV for reuse</button>
+          <button type="button" id="forgetCvButton" class="link-button" hidden>Forget saved CV</button>
+          <span class="save-status" id="saveCvStatus"></span>
+        </div>
+      </div>
     </section>
 
     <section class="weight-panel" aria-label="Scoring weights">
@@ -340,6 +397,11 @@
     const cvFile = document.querySelector('#cvFile');
     const jobName = document.querySelector('#jobName');
     const cvName = document.querySelector('#cvName');
+    const cvZone = document.querySelector('#cvZone');
+    const cvHeading = document.querySelector('#cvHeading');
+    const saveCvButton = document.querySelector('#saveCvButton');
+    const forgetCvButton = document.querySelector('#forgetCvButton');
+    const saveCvStatus = document.querySelector('#saveCvStatus');
     const button = document.querySelector('#compareButton');
     const skillsWeight = document.querySelector('#skillsWeight');
     const skillsWeightValue = document.querySelector('#skillsWeightValue');
@@ -350,9 +412,14 @@
     const tabContent = document.querySelector('#tabContent');
     const tabs = document.querySelectorAll('.tab');
     let latestResult = null;
+    // The CV itself never lives here — only which cv_id the server already
+    // holds a redacted copy of, so "saved" survives reloads without the
+    // raw file (or its PII) ever needing to be re-uploaded or re-stored
+    // client-side.
+    let savedCv = loadSavedCv();
 
     for (const input of [jobFile, cvFile]) {
-      input.addEventListener('change', updateFileState);
+      input.addEventListener('change', input === cvFile ? onCvFileChosen : updateFileState);
       const zone = input.closest('.dropzone');
       zone.addEventListener('dragenter', () => zone.classList.add('dragover'));
       zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
@@ -360,30 +427,138 @@
     }
 
     button.addEventListener('click', compare);
-  skillsWeight.addEventListener('input', updateWeightState);
+    saveCvButton.addEventListener('click', saveCv);
+    forgetCvButton.addEventListener('click', forgetSavedCv);
+    skillsWeight.addEventListener('input', updateWeightState);
     tabs.forEach(tab => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
-  updateWeightState();
+    updateWeightState();
+    updateFileState();
+
+    function loadSavedCv() {
+      try {
+        const raw = localStorage.getItem('savedCv');
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function persistSavedCv(data) {
+      savedCv = data;
+      try { localStorage.setItem('savedCv', JSON.stringify(data)); } catch {}
+      renderCvState();
+    }
+
+    function forgetSavedCv() {
+      savedCv = null;
+      try { localStorage.removeItem('savedCv'); } catch {}
+      cvFile.value = '';
+      saveCvStatus.textContent = '';
+      saveCvStatus.classList.remove('error');
+      renderCvState();
+      updateFileState();
+    }
+
+    function onCvFileChosen() {
+      // Picking a new file always overrides what Compare will use next
+      // (see compare()), but doesn't erase a previously saved cv_id until
+      // "Save CV for reuse" is actually clicked — so an in-progress swap
+      // can't leave Compare with nothing usable if the user changes their
+      // mind.
+      saveCvStatus.textContent = '';
+      saveCvStatus.classList.remove('error');
+      updateFileState();
+    }
+
+    function renderCvState() {
+      const hasNewFile = Boolean(cvFile.files[0]);
+      if (savedCv && !hasNewFile) {
+        cvZone.classList.add('saved');
+        cvHeading.textContent = 'CV saved';
+        cvName.textContent = `${savedCv.filename} · ${savedCv.piiSpanCount} field(s) redacted`;
+        saveCvButton.hidden = true;
+        forgetCvButton.hidden = false;
+      } else {
+        cvZone.classList.remove('saved');
+        cvHeading.textContent = 'Drop PDF or TXT';
+        cvName.textContent = hasNewFile ? cvFile.files[0].name : 'No file selected';
+        saveCvButton.hidden = false;
+        saveCvButton.disabled = !hasNewFile;
+        forgetCvButton.hidden = !savedCv;
+      }
+    }
+
+    async function saveCv() {
+      if (!cvFile.files[0]) return;
+      const formData = new FormData();
+      formData.append('candidate_cv', cvFile.files[0]);
+      const filename = cvFile.files[0].name;
+      saveCvButton.disabled = true;
+      saveCvStatus.textContent = 'Redacting and saving...';
+      saveCvStatus.classList.remove('error');
+
+      try {
+        const response = await fetch('/api/ingest', { method: 'POST', body: formData });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || 'Save failed.');
+        cvFile.value = '';
+        persistSavedCv({
+          cvId: payload.cv_id,
+          filename,
+          piiSpanCount: payload.pii_span_count,
+        });
+        saveCvStatus.textContent = 'Saved — future compares reuse it without re-uploading.';
+      } catch (error) {
+        saveCvStatus.textContent = error.message;
+        saveCvStatus.classList.add('error');
+      } finally {
+        updateFileState();
+      }
+    }
 
     function updateFileState() {
       jobName.textContent = jobFile.files[0]?.name || 'No file selected';
-      cvName.textContent = cvFile.files[0]?.name || 'No file selected';
-      button.disabled = !(jobFile.files[0] && cvFile.files[0]);
-      statusEl.textContent = button.disabled ? 'Choose both files to begin.' : 'Ready to compare.';
+      refreshReadiness();
+      statusEl.textContent = button.disabled
+        ? (savedCv ? 'Choose a job listing to begin.' : 'Choose both files to begin.')
+        : 'Ready to compare.';
       statusEl.classList.remove('error');
     }
 
+    // Recomputes CV/button state without touching statusEl — used from
+    // compare()'s `finally` so a just-set result/error message (or the
+    // "Running compare..." message on failure) isn't immediately
+    // overwritten by a generic "Ready to compare." the way calling the
+    // full updateFileState() there would.
+    function refreshReadiness() {
+      renderCvState();
+      const cvReady = Boolean(savedCv) || Boolean(cvFile.files[0]);
+      button.disabled = !(jobFile.files[0] && cvReady);
+    }
+
     async function compare() {
+      // A freshly chosen CV file always takes priority over a saved one
+      // (see onCvFileChosen) — Compare against exactly what's visible
+      // rather than silently falling back to an older saved CV.
+      const useSavedCv = Boolean(savedCv) && !cvFile.files[0];
       const formData = new FormData();
       formData.append('job_listing', jobFile.files[0]);
-      formData.append('candidate_cv', cvFile.files[0]);
       formData.append('skills_weight', String(Number(skillsWeight.value) / 100));
       formData.append('work_experience_weight', String((100 - Number(skillsWeight.value)) / 100));
+      if (useSavedCv) {
+        formData.append('cv_id', savedCv.cvId);
+      } else {
+        formData.append('candidate_cv', cvFile.files[0]);
+      }
       button.disabled = true;
       statusEl.textContent = 'Running compare...';
       statusEl.classList.remove('error');
 
       try {
-        const response = await fetch('/api/compare', { method: 'POST', body: formData });
+        const response = await fetch(useSavedCv ? '/api/match' : '/api/compare', {
+          method: 'POST',
+          body: formData,
+        });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.detail || 'Compare failed.');
         latestResult = payload;
@@ -395,7 +570,7 @@
         statusEl.textContent = error.message;
         statusEl.classList.add('error');
       } finally {
-        button.disabled = !(jobFile.files[0] && cvFile.files[0]);
+        refreshReadiness();
       }
     }
 
