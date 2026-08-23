@@ -4,3 +4,16 @@ verbose: true
 models:
   evaluation: cv-guestimator-lora
   pii: local-llama
+
+# Optional per-role fallback: if the role's primary model (above) fails —
+# the backend is unreachable, or Instructor can't get valid structured
+# output out of it after its own retries — client_for_role() transparently
+# retries the request against the named fallback model instead. A role
+# with no entry here has no fallback. See FallbackInstructorClient
+# (src/services/llm_client.py) for exactly what counts as "failed".
+#
+# This only applies to client_for_role() (the web API / src/api/routes.py).
+# Harness tasks under tasks/*.yaml pin one model directly via
+# client_from_config() so A/B evaluation runs stay reproducible.
+fallback_models:
+  evaluation: gemini-flash

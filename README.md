@@ -124,7 +124,7 @@ Runs are described declaratively:
 - `configs/llm.yaml` defines named model configurations (provider, model, base URL, API key or `api_key_env`, temperature). It ships with `gemini-flash`, a few local Ollama models for A/B testing (`local-llama`, `local-llama-1b`, `local-deepseek-1.5b`), and a placeholder for a fine-tuned `cv-guestimator-lora` build.
 - `configs/scoring.yaml` holds the default scoring weights.
 - `configs/pii_policy.yaml` lists which PII detectors compose the composite detector, in order — `regex` and `model` by default, with a local NER-based `presidio` detector (no LLM call) also registered and available to swap in project-wide or per task.
-- `configs/pipeline.yaml` holds pipeline runtime defaults such as verbosity and the default model selection.
+- `configs/pipeline.yaml` holds pipeline runtime defaults such as verbosity and the default model selection, plus an optional `fallback_models` mapping (see below).
 - `configs/deployment.yaml` documents ports and image names used by Docker.
 
 Tasks under `tasks/` pick the pipeline shape, models, inputs, and evaluation thresholds. A task's `pipeline:` field is one of:
@@ -173,6 +173,22 @@ The project uses the OpenAI Python SDK plus Instructor against OpenAI-compatible
 Harness runs (`main.py`) select models by name from `configs/llm.yaml`. The web API uses the default model names in `configs/pipeline.yaml` and resolves those names through the same `configs/llm.yaml` entries. Cloud entries reference API keys through `api_key_env`, which is resolved from the environment or a local `.env` file (for example `GOOGLE_API_KEY` for the Gemini OpenAI-compatible endpoint).
 
 Default scoring weights live in `configs/scoring.yaml`. The web API upload form can still override those weights per request.
+
+### Model fallback
+
+`configs/pipeline.yaml` can name a fallback model per role:
+
+```yaml
+models:
+  evaluation: cv-guestimator-lora
+  pii: local-llama
+fallback_models:
+  evaluation: gemini-flash
+```
+
+With this set, `client_for_role("evaluation")` (used by the web API) returns a `FallbackInstructorClient` that calls `cv-guestimator-lora` first and only calls `gemini-flash` if the primary fails — the local Ollama server is unreachable/hasn't had the LoRA build `ollama create`d yet, or Instructor exhausts its retries without getting output that validates against the response schema. A role with no `fallback_models` entry behaves exactly as before (its plain configured client, no wrapping). Both the API responses and the logged run artifact (`RunModelConfig.fallback_used`) record whether a given run's evaluation actually fell back, so a run that silently used Gemini instead of the local SLM is visible after the fact, not just in logs.
+
+This only applies where `client_for_role()` builds the client (`src/api/routes.py`). Harness tasks under `tasks/*.yaml` call `client_from_config()` directly with one pinned model each, so A/B evaluation runs stay reproducible and unaffected by fallback config.
 
 Create a local `.env` file if you need to override these values:
 

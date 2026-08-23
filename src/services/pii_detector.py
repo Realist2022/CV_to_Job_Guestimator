@@ -6,7 +6,7 @@ from typing import Callable, Dict, Final, List, Optional
 from src.schemas.pii import TextSpan
 from src.services.agents import PIIAgent
 from src.services.document_parser import CandidateCV, normalise
-from src.services.llm_client import InstructorClient
+from src.services.llm_client import CompletionClient
 
 # Keywords that should never be tagged under marital_or_family
 FORBIDDEN_REDACTION_KEYWORDS: Final = [
@@ -210,7 +210,7 @@ class CompositePIIDetector(PIIDetector):
         return spans
 
 
-def _build_presidio_detector(_pii_client: Optional[InstructorClient]) -> PIIDetector:
+def _build_presidio_detector(_pii_client: Optional[CompletionClient]) -> PIIDetector:
     # Imported lazily so importing this module never pulls in spacy/presidio
     # (and their model-load cost) unless "presidio" is actually enabled in
     # configs/pii_policy.yaml.
@@ -234,7 +234,7 @@ def _build_presidio_detector(_pii_client: Optional[InstructorClient]) -> PIIDete
 # alternative to "model" rather than a replacement for it. Composed with
 # "regex" via configs/pii_policy.yaml or a task's `pii_detectors` override
 # (see tasks/pii_presidio_eval.yaml) to A/B against the model-based run.
-PII_DETECTOR_FACTORIES: Dict[str, Callable[[Optional[InstructorClient]], PIIDetector]] = {
+PII_DETECTOR_FACTORIES: Dict[str, Callable[[Optional[CompletionClient]], PIIDetector]] = {
     "regex": lambda _pii_client: RegexPIIDetector(),
     "model": lambda pii_client: ModelPIIDetector(PIIAgent(pii_client)),
     "presidio": _build_presidio_detector,
@@ -242,7 +242,7 @@ PII_DETECTOR_FACTORIES: Dict[str, Callable[[Optional[InstructorClient]], PIIDete
 
 
 def build_pii_detector(
-    names: List[str], pii_client: Optional[InstructorClient] = None
+    names: List[str], pii_client: Optional[CompletionClient] = None
 ) -> CompositePIIDetector:
     """Compose a CompositePIIDetector from configs/pii_policy.yaml detector names."""
     try:
