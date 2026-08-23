@@ -2,14 +2,27 @@
 
 import os
 
-from src.config import load_model_config, load_pipeline_model_names
+from src.config import load_model_config, load_pipeline_fallback_names, load_pipeline_model_names
 from src.model.model_registry import get_provider_class
-from src.services.llm_client import InstructorClient
+from src.services.llm_client import CompletionClient, FallbackInstructorClient, InstructorClient
 
 
-def client_for_role(role: str) -> InstructorClient:
-    """Build the client configured in configs/pipeline.yaml for 'evaluation' or 'pii'."""
-    return client_from_config(load_model_config(load_pipeline_model_names()[role]))
+def client_for_role(role: str) -> CompletionClient:
+    """Build the client configured in configs/pipeline.yaml for 'evaluation' or 'pii'.
+
+    If configs/pipeline.yaml's `fallback_models` names a fallback for this
+    role, the returned client is a FallbackInstructorClient that tries the
+    primary model first and only calls the fallback model if the primary
+    fails (see FallbackInstructorClient for what counts as a failure).
+    Callers don't need to care either way: both expose the same
+    `complete()` / `.model` / `.temperature` / `.last_attempts` interface.
+    """
+    primary = client_from_config(load_model_config(load_pipeline_model_names()[role]))
+    fallback_name = load_pipeline_fallback_names().get(role)
+    if fallback_name is None:
+        return primary
+    fallback = client_from_config(load_model_config(fallback_name))
+    return FallbackInstructorClient(primary, fallback)
 
 
 def client_from_config(config: dict) -> InstructorClient:

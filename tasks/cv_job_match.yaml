@@ -1,9 +1,9 @@
-name: cv_job_match
+﻿name: cv_job_match
 description: Full CV vs job listing comparison with the cloud evaluation model.
 pipeline: extraction
 
 models:
-  evaluation: cv-guestimator-lora
+  evaluation: cv-guestimator
   pii: local-llama
 
 inputs:

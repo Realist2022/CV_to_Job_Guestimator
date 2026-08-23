@@ -16,6 +16,7 @@ from src.services import (
     CVIngestionStore,
     CVNotFoundError,
     ExtractionPipeline,
+    FallbackInstructorClient,
     IngestionPipeline,
     JobListing,
     MatchingPipeline,
@@ -28,6 +29,13 @@ from src.utils import ArtifactLogger
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 router = APIRouter()
+
+
+def _fallback_used(client: object) -> bool:
+    """Whether `client`'s most recent call was served by its fallback model
+    rather than its configured primary (always False for a plain
+    InstructorClient with no fallback configured)."""
+    return isinstance(client, FallbackInstructorClient) and client.fallback_used
 
 
 @router.post("/api/compare", response_model=CompareResponse)
@@ -81,11 +89,13 @@ async def compare_documents(
                 name=model_names["evaluation"],
                 engine=eval_client.model,
                 temperature=eval_client.temperature,
+                fallback_used=_fallback_used(eval_client),
             ),
             pii_model=RunModelConfig(
                 name=model_names["pii"],
                 engine=pii_client.model,
                 temperature=pii_client.temperature,
+                fallback_used=_fallback_used(pii_client),
             ),
         )
         artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
@@ -134,6 +144,7 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
                 name=model_names["pii"],
                 engine=pii_client.model,
                 temperature=pii_client.temperature,
+                fallback_used=_fallback_used(pii_client),
             ),
         )
         artifact_path, _ = persist_ingestion(result, config)
@@ -183,6 +194,7 @@ async def match_cv(
                 name=load_pipeline_model_names()["evaluation"],
                 engine=eval_client.model,
                 temperature=eval_client.temperature,
+                fallback_used=_fallback_used(eval_client),
             ),
             pii_model=RunModelConfig(
                 name=redacted_cv.pii_engine,
@@ -227,9 +239,9 @@ def _scoring_engine(
     return RelevanceScoringEngine(weights)
 
 
-async def _load_document(
-    upload: UploadFile, document_type: type[JobListing] | type[CandidateCV], label: str
-) -> JobListing | CandidateCV:
+async def _load_document[DocumentT: (JobListing, CandidateCV)](
+    upload: UploadFile, document_type: type[DocumentT], label: str
+) -> DocumentT:
     content = await upload.read()
     if not content:
         raise ValueError(f"The {label} upload is empty.")

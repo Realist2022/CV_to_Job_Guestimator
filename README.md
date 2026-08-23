@@ -121,10 +121,10 @@ The web UI wraps the same pipelines with a drag-and-drop upload page and `/api/c
 
 Runs are described declaratively:
 
-- `configs/llm.yaml` defines named model configurations (provider, model, base URL, API key or `api_key_env`, temperature). It ships with `gemini-flash`, a few local Ollama models for A/B testing (`local-llama`, `local-llama-1b`, `local-deepseek-1.5b`), and a placeholder for a fine-tuned `cv-guestimator-lora` build.
+- `configs/llm.yaml` defines named model configurations (provider, model, base URL, API key or `api_key_env`, temperature). It ships with `gemini-flash`, a few local Ollama models for A/B testing (`local-llama`, `local-llama-1b`, `local-deepseek-1.5b`), and a placeholder for a fine-tuned `cv-guestimator` build.
 - `configs/scoring.yaml` holds the default scoring weights.
 - `configs/pii_policy.yaml` lists which PII detectors compose the composite detector, in order — `regex` and `model` by default, with a local NER-based `presidio` detector (no LLM call) also registered and available to swap in project-wide or per task.
-- `configs/pipeline.yaml` holds pipeline runtime defaults such as verbosity and the default model selection.
+- `configs/pipeline.yaml` holds pipeline runtime defaults such as verbosity and the default model selection, plus an optional `fallback_models` mapping (see below).
 - `configs/deployment.yaml` documents ports and image names used by Docker.
 
 Tasks under `tasks/` pick the pipeline shape, models, inputs, and evaluation thresholds. A task's `pipeline:` field is one of:
@@ -173,6 +173,22 @@ The project uses the OpenAI Python SDK plus Instructor against OpenAI-compatible
 Harness runs (`main.py`) select models by name from `configs/llm.yaml`. The web API uses the default model names in `configs/pipeline.yaml` and resolves those names through the same `configs/llm.yaml` entries. Cloud entries reference API keys through `api_key_env`, which is resolved from the environment or a local `.env` file (for example `GOOGLE_API_KEY` for the Gemini OpenAI-compatible endpoint).
 
 Default scoring weights live in `configs/scoring.yaml`. The web API upload form can still override those weights per request.
+
+### Model fallback
+
+`configs/pipeline.yaml` can name a fallback model per role:
+
+```yaml
+models:
+  evaluation: cv-guestimator
+  pii: local-llama
+fallback_models:
+  evaluation: gemini-flash
+```
+
+With this set, `client_for_role("evaluation")` (used by the web API) returns a `FallbackInstructorClient` that calls `cv-guestimator` first and only calls `gemini-flash` if the primary fails — the local Ollama server is unreachable/hasn't had the LoRA build `ollama create`d yet, or Instructor exhausts its retries without getting output that validates against the response schema. A role with no `fallback_models` entry behaves exactly as before (its plain configured client, no wrapping). Both the API responses and the logged run artifact (`RunModelConfig.fallback_used`) record whether a given run's evaluation actually fell back, so a run that silently used Gemini instead of the local SLM is visible after the fact, not just in logs.
+
+This only applies where `client_for_role()` builds the client (`src/api/routes.py`). Harness tasks under `tasks/*.yaml` call `client_from_config()` directly with one pinned model each, so A/B evaluation runs stay reproducible and unaffected by fallback config.
 
 Create a local `.env` file if you need to override these values:
 
@@ -298,7 +314,7 @@ Run everything with:
 docker compose up --build
 ```
 
-`artifacts/` and `dataSet/` are mounted into the api container as volumes so private inputs and run traces stay on the host. `docker/ollama/Modelfile` builds a fine-tuned model from a local GGUF export: drop your exported file in as `docker/ollama/cv-guestimator.gguf` (gitignored), run `ollama create cv-guestimator-lora -f docker/ollama/Modelfile`, and reference `cv-guestimator-lora` from `configs/llm.yaml` in a task.
+`artifacts/` and `dataSet/` are mounted into the api container as volumes so private inputs and run traces stay on the host. `docker/ollama/Modelfile` builds a fine-tuned model from a local GGUF export: drop your exported file in as `docker/ollama/cv-guestimator.gguf` (gitignored), run `ollama create cv-guestimator -f docker/ollama/Modelfile`, and reference `cv-guestimator` from `configs/llm.yaml` in a task.
 
 ## Scoring Logic
 

@@ -23,7 +23,7 @@ from src.schemas.requirements import (
     SkillEvaluationOutput,
 )
 from src.services.document_parser import CandidateCV, JobListing
-from src.services.llm_client import InstructorClient
+from src.services.llm_client import CompletionClient
 
 _SKILL_NAME_ALIASES = {
     "react": ("react", "react.js", "reactjs"),
@@ -152,7 +152,7 @@ class JobRequirementsAgent:
 
     system_prompt = JOB_REQUIREMENTS_SYSTEM_PROMPT
 
-    def __init__(self, client: InstructorClient):
+    def __init__(self, client: CompletionClient):
         self.client = client
 
     def run(self, listing: JobListing) -> Optional[JobRequirementsOutput]:
@@ -169,7 +169,7 @@ class SkillMatcherAgent:
 
     system_prompt = SKILL_MATCHER_SYSTEM_PROMPT
 
-    def __init__(self, client: InstructorClient):
+    def __init__(self, client: CompletionClient):
         self.client = client
 
     def run(
@@ -225,7 +225,7 @@ class OverallExperienceAgent:
 
     system_prompt = OVERALL_EXPERIENCE_SYSTEM_PROMPT
 
-    def __init__(self, client: InstructorClient):
+    def __init__(self, client: CompletionClient):
         self.client = client
 
     def run(
@@ -254,7 +254,7 @@ class PIIAgent:
 
     system_prompt = PII_SYSTEM_PROMPT
 
-    def __init__(self, client: InstructorClient):
+    def __init__(self, client: CompletionClient):
         self.client = client
 
     def run(self, cv: CandidateCV) -> Optional[PIIOutput]:

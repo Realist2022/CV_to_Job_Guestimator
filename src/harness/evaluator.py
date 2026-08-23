@@ -4,6 +4,7 @@ from operator import ge, le
 
 from src.harness.task_loader import EvaluationCriteria
 from src.schemas.evaluation import CheckResult, EvaluationReport
+from src.schemas.ingestion import IngestionResult
 from src.schemas.pipeline import PipelineResult
 
 # criterion name -> (comparison symbol, operator, value taken from the result)
@@ -19,7 +20,13 @@ class ThresholdEvaluator:
     def __init__(self, criteria: EvaluationCriteria):
         self.criteria = criteria
 
-    def evaluate(self, result: PipelineResult) -> EvaluationReport:
+    def evaluate(self, result: PipelineResult | IngestionResult) -> EvaluationReport:
+        # Attribute access happens lazily per criterion, so an
+        # IngestionResult (no scorecard/metrics) is fine as long as the
+        # task only sets the criteria its result shape supports; a
+        # mismatch (e.g. min_final_relevance on an ingestion task)
+        # raises AttributeError here rather than being caught at load
+        # time.
         checks: list[CheckResult] = []
         for name, symbol, compare, actual_of in _CHECKS:
             threshold = getattr(self.criteria, name)

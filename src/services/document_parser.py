@@ -3,7 +3,7 @@ import io
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Self, Sequence
 
 from src.schemas.pii import TextSpan
 
@@ -104,7 +104,7 @@ class SourceDocument:
         self._normalised = normalise(text)
 
     @classmethod
-    def from_text(cls, text: str, *, label: str = "document") -> "SourceDocument":
+    def from_text(cls, text: str, *, label: str = "document") -> Self:
         cleaned = _clean_pdf_text(text)
         quality = assess_text_quality(cleaned)
         if quality.is_likely_readable:
@@ -117,16 +117,16 @@ class SourceDocument:
         )
 
     @classmethod
-    def from_text_bytes(cls, content: bytes, *, label: str = "document") -> "SourceDocument":
+    def from_text_bytes(cls, content: bytes, *, label: str = "document") -> Self:
         return cls.from_text(_decode_text_bytes(content, label), label=label)
 
     @classmethod
-    def from_text_file(cls, path: str) -> "SourceDocument":
+    def from_text_file(cls, path: str) -> Self:
         file_path = Path(path)
         return cls.from_text_bytes(file_path.read_bytes(), label=str(file_path))
 
     @classmethod
-    def from_path(cls, path: str) -> "SourceDocument":
+    def from_path(cls, path: str) -> Self:
         suffix = Path(path).suffix.lower()
         if suffix == ".txt":
             return cls.from_text_file(path)
@@ -135,7 +135,7 @@ class SourceDocument:
         raise ValueError(f"Document must be a PDF or TXT file: '{path}'")
 
     @classmethod
-    def from_pdf(cls, path: str, *, cache_text: bool = False) -> "SourceDocument":
+    def from_pdf(cls, path: str, *, cache_text: bool = False) -> Self:
         failures = []
         extractors = (
             ("pypdf", _extract_with_pypdf),

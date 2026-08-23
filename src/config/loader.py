@@ -57,6 +57,21 @@ def load_pipeline_model_names() -> dict[str, str]:
     return {"evaluation": models["evaluation"], "pii": models["pii"]}
 
 
+def load_pipeline_fallback_names() -> dict[str, str]:
+    """Optional `fallback_models` mapping from configs/pipeline.yaml.
+
+    A role (e.g. "evaluation") with no entry here has no fallback, which is
+    the default: `client_for_role()` returns that role's primary client
+    unwrapped. A role listed here gets its primary client wrapped in a
+    FallbackInstructorClient that falls back to the named model config on
+    failure — e.g. a fine-tuned local SLM falling back to a hosted model.
+    """
+    fallback_models = load_yaml("pipeline.yaml").get("fallback_models") or {}
+    if not isinstance(fallback_models, dict):
+        raise ValueError("configs/pipeline.yaml 'fallback_models' key must be a mapping.")
+    return dict(fallback_models)
+
+
 def load_pii_detector_names() -> list[str]:
     detectors = load_yaml("pii_policy.yaml").get("detectors")
     if not isinstance(detectors, list) or not detectors:

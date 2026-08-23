@@ -22,7 +22,7 @@ from src.schemas.ingestion import IngestionResult
 from src.schemas.pipeline import PipelineResult
 from src.services.document_parser import CandidateCV, JobListing
 from src.services.ingestion_pipeline import IngestionPipeline
-from src.services.llm_client import InstructorClient
+from src.services.llm_client import CompletionClient
 from src.services.matching_pipeline import MatchingPipeline
 from src.services.pii_detector import PIIDetector
 from src.services.scoring_engine import RelevanceScoringEngine
@@ -31,9 +31,9 @@ from src.services.scoring_engine import RelevanceScoringEngine
 class ExtractionPipeline:
     def __init__(
         self,
-        client: InstructorClient,
+        client: CompletionClient,
         pii_detector: Optional[PIIDetector] = None,
-        pii_client: Optional[InstructorClient] = None,
+        pii_client: Optional[CompletionClient] = None,
         scoring_engine: Optional[RelevanceScoringEngine] = None,
     ):
         self.client = client
@@ -52,7 +52,7 @@ class ExtractionPipeline:
         cv: CandidateCV,
         *,
         verbose: bool = True,
-        on_ingested: Optional[Callable[[IngestionResult], None]] = None,
+        on_ingested: Optional[Callable[[IngestionResult], object]] = None,
     ) -> PipelineResult:
         """Run ingestion then matching, returning one combined PipelineResult.
 
