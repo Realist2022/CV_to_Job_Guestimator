@@ -21,6 +21,14 @@ class RunModelConfig(BaseModel):
     name: str = Field(min_length=1, description="Named config key from configs/llm.yaml.")
     engine: str = Field(min_length=1, description="Resolved model string sent to the provider.")
     temperature: float
+    fallback_used: bool = Field(
+        default=False,
+        description=(
+            "True if `name`'s primary model failed for this run and `engine` "
+            "reflects a fallback model instead (see configs/pipeline.yaml "
+            "'fallback_models' and FallbackInstructorClient)."
+        ),
+    )
 
 
 class RunConfig(BaseModel):

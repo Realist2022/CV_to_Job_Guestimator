@@ -16,7 +16,7 @@ from src.schemas.pipeline import PipelineMetrics, PipelineResult, TraceSpan, uui
 from src.schemas.requirements import SkillMatchResult
 from src.services.agents import JobRequirementsAgent, OverallExperienceAgent, SkillMatcherAgent
 from src.services.document_parser import JobListing
-from src.services.llm_client import InstructorClient
+from src.services.llm_client import CompletionClient
 from src.services.pipeline_tracing import traced_step
 from src.services.scoring_engine import RelevanceScoringEngine
 
@@ -30,7 +30,7 @@ def _require(value, failure_message: str):
 class MatchingPipeline:
     def __init__(
         self,
-        client: InstructorClient,
+        client: CompletionClient,
         scoring_engine: Optional[RelevanceScoringEngine] = None,
     ):
         self.client = client

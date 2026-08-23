@@ -16,7 +16,7 @@ from src.config import load_pii_detector_names
 from src.schemas.ingestion import IngestionResult, RedactedCV
 from src.schemas.pipeline import TraceSpan, uuid7
 from src.services.document_parser import CandidateCV
-from src.services.llm_client import InstructorClient
+from src.services.llm_client import CompletionClient
 from src.services.pii_detector import PIIDetector, build_pii_detector
 
 
@@ -24,7 +24,7 @@ class IngestionPipeline:
     def __init__(
         self,
         pii_detector: Optional[PIIDetector] = None,
-        pii_client: Optional[InstructorClient] = None,
+        pii_client: Optional[CompletionClient] = None,
     ):
         self.pii_client = pii_client or _default_pii_client()
         self.pii_detector = pii_detector or build_pii_detector(
@@ -71,7 +71,7 @@ class IngestionPipeline:
         )
 
 
-def _default_pii_client() -> InstructorClient:
+def _default_pii_client() -> CompletionClient:
     # Imported lazily to avoid a circular import through src.services.
     from src.model.adapters import client_for_role
 
