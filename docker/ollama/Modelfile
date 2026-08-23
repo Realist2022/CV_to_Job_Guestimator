@@ -2,7 +2,7 @@
 #
 # Export your fine-tuned GGUF build (e.g. from Unsloth) into this directory
 # as cv-guestimator.gguf (gitignored — it never gets committed), then build
-# with:  ollama create cv-guestimator-lora -f docker/ollama/Modelfile
+# with:  ollama create cv-guestimator -f docker/ollama/Modelfile
 #
 # `ollama create -f` resolves FROM relative to this file, so this path stays
 # portable across machines instead of pointing at one person's local export.

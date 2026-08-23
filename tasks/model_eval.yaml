@@ -1,11 +1,11 @@
-name: model_eval
+﻿name: model_eval
 description: >
   Benchmarks a candidate model (e.g. the fine-tuned LoRA build) on the same
   documents with pass/fail thresholds. Swap models.evaluation to compare.
 pipeline: extraction
 
 models:
-  evaluation: cv-guestimator-lora
+  evaluation: cv-guestimator
   pii: local-llama
 
 inputs:

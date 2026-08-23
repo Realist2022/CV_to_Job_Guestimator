@@ -1,4 +1,4 @@
-name: pii_1b_eval
+﻿name: pii_1b_eval
 description: >
   Same documents and evaluation model as cv_job_match.yaml, but pii swapped
   to local-llama-1b. Run this and cv_job_match.yaml back to back and compare
@@ -7,7 +7,7 @@ description: >
 pipeline: extraction
 
 models:
-  evaluation: cv-guestimator-lora
+  evaluation: cv-guestimator
   pii: local-llama-1b
 
 inputs:

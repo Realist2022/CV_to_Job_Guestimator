@@ -227,9 +227,9 @@ def _scoring_engine(
     return RelevanceScoringEngine(weights)
 
 
-async def _load_document(
-    upload: UploadFile, document_type: type[JobListing] | type[CandidateCV], label: str
-) -> JobListing | CandidateCV:
+async def _load_document[DocumentT: (JobListing, CandidateCV)](
+    upload: UploadFile, document_type: type[DocumentT], label: str
+) -> DocumentT:
     content = await upload.read()
     if not content:
         raise ValueError(f"The {label} upload is empty.")

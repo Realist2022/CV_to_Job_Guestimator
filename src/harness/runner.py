@@ -90,8 +90,10 @@ class HarnessRunner:
         return self._run_extraction(task, task_path)
 
     def _run_extraction(self, task: TaskSpec, task_path: str | None) -> HarnessRunReport:
-        eval_client = client_from_config(self._model_config(_require_model(task, "evaluation")))
-        pii_client = client_from_config(self._model_config(_require_model(task, "pii")))
+        evaluation_model_name = _require_model(task, "evaluation")
+        pii_model_name = _require_model(task, "pii")
+        eval_client = client_from_config(self._model_config(evaluation_model_name))
+        pii_client = client_from_config(self._model_config(pii_model_name))
         pii_detector_names = task.pii_detectors or self.default_pii_detector_names
 
         detector = CompositePIIDetector(
@@ -131,7 +133,7 @@ class HarnessRunner:
                 task_path=task_path,
                 pii_detectors=pii_detector_names,
                 pii_model=RunModelConfig(
-                    name=task.models.pii,
+                    name=pii_model_name,
                     engine=pii_client.model,
                     temperature=pii_client.temperature,
                 ),
@@ -153,12 +155,12 @@ class HarnessRunner:
             scoring_weights=scoring_weights,
             pii_detectors=pii_detector_names,
             evaluation_model=RunModelConfig(
-                name=task.models.evaluation,
+                name=evaluation_model_name,
                 engine=eval_client.model,
                 temperature=eval_client.temperature,
             ),
             pii_model=RunModelConfig(
-                name=task.models.pii,
+                name=pii_model_name,
                 engine=pii_client.model,
                 temperature=pii_client.temperature,
             ),
@@ -176,7 +178,8 @@ class HarnessRunner:
         )
 
     def _run_ingestion(self, task: TaskSpec, task_path: str | None) -> HarnessRunReport:
-        pii_client = client_from_config(self._model_config(_require_model(task, "pii")))
+        pii_model_name = _require_model(task, "pii")
+        pii_client = client_from_config(self._model_config(pii_model_name))
         pii_detector_names = task.pii_detectors or self.default_pii_detector_names
         detector = CompositePIIDetector(
             *[
@@ -195,7 +198,7 @@ class HarnessRunner:
             task_path=task_path,
             pii_detectors=pii_detector_names,
             pii_model=RunModelConfig(
-                name=task.models.pii,
+                name=pii_model_name,
                 engine=pii_client.model,
                 temperature=pii_client.temperature,
             ),
@@ -217,7 +220,8 @@ class HarnessRunner:
         )
 
     def _run_matching(self, task: TaskSpec, task_path: str | None) -> HarnessRunReport:
-        eval_client = client_from_config(self._model_config(_require_model(task, "evaluation")))
+        evaluation_model_name = _require_model(task, "evaluation")
+        eval_client = client_from_config(self._model_config(evaluation_model_name))
         scoring_weights = task.scoring_weights or self.default_weights
         scoring_engine = RelevanceScoringEngine(scoring_weights)
         pipeline = MatchingPipeline(eval_client, scoring_engine=scoring_engine)
@@ -244,7 +248,7 @@ class HarnessRunner:
             # No detector ran in this task; the CV arrived pre-redacted.
             pii_detectors=[],
             evaluation_model=RunModelConfig(
-                name=task.models.evaluation,
+                name=evaluation_model_name,
                 engine=eval_client.model,
                 temperature=eval_client.temperature,
             ),

@@ -52,7 +52,7 @@ class ExtractionPipeline:
         cv: CandidateCV,
         *,
         verbose: bool = True,
-        on_ingested: Optional[Callable[[IngestionResult], None]] = None,
+        on_ingested: Optional[Callable[[IngestionResult], object]] = None,
     ) -> PipelineResult:
         """Run ingestion then matching, returning one combined PipelineResult.
 

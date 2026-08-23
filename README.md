@@ -121,7 +121,7 @@ The web UI wraps the same pipelines with a drag-and-drop upload page and `/api/c
 
 Runs are described declaratively:
 
-- `configs/llm.yaml` defines named model configurations (provider, model, base URL, API key or `api_key_env`, temperature). It ships with `gemini-flash`, a few local Ollama models for A/B testing (`local-llama`, `local-llama-1b`, `local-deepseek-1.5b`), and a placeholder for a fine-tuned `cv-guestimator-lora` build.
+- `configs/llm.yaml` defines named model configurations (provider, model, base URL, API key or `api_key_env`, temperature). It ships with `gemini-flash`, a few local Ollama models for A/B testing (`local-llama`, `local-llama-1b`, `local-deepseek-1.5b`), and a placeholder for a fine-tuned `cv-guestimator` build.
 - `configs/scoring.yaml` holds the default scoring weights.
 - `configs/pii_policy.yaml` lists which PII detectors compose the composite detector, in order — `regex` and `model` by default, with a local NER-based `presidio` detector (no LLM call) also registered and available to swap in project-wide or per task.
 - `configs/pipeline.yaml` holds pipeline runtime defaults such as verbosity and the default model selection.
@@ -298,7 +298,7 @@ Run everything with:
 docker compose up --build
 ```
 
-`artifacts/` and `dataSet/` are mounted into the api container as volumes so private inputs and run traces stay on the host. `docker/ollama/Modelfile` builds a fine-tuned model from a local GGUF export: drop your exported file in as `docker/ollama/cv-guestimator.gguf` (gitignored), run `ollama create cv-guestimator-lora -f docker/ollama/Modelfile`, and reference `cv-guestimator-lora` from `configs/llm.yaml` in a task.
+`artifacts/` and `dataSet/` are mounted into the api container as volumes so private inputs and run traces stay on the host. `docker/ollama/Modelfile` builds a fine-tuned model from a local GGUF export: drop your exported file in as `docker/ollama/cv-guestimator.gguf` (gitignored), run `ollama create cv-guestimator -f docker/ollama/Modelfile`, and reference `cv-guestimator` from `configs/llm.yaml` in a task.
 
 ## Scoring Logic
 
