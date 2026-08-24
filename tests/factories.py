@@ -15,8 +15,10 @@ required-field change (e.g. redacted_cv_trace_id) meant editing all of them
 by hand instead of one factory.
 """
 
-from typing import Any, Callable
+from typing import Any, Callable, Type
 from uuid import UUID
+
+from pydantic import BaseModel
 
 from src.schemas.experience import OverallExperienceOutput, WorkRole
 from src.schemas.pii import TextSpan
@@ -53,6 +55,32 @@ class RecordingClient:
         self.last_attempts = 1
         response = self.responses[system_prompt]
         return response(response_model) if callable(response) else response
+
+
+class FailingClient:
+    """Fake InstructorClient whose complete() always raises the given exception.
+
+    Pair with RecordingClient inside a FallbackInstructorClient to simulate
+    "primary backend is down/broken, fallback serves the request" without a
+    live model — see test_fallback_client.py (the client's own unit tests)
+    and test_fallback_integration.py (a real pipeline/agents routed through
+    it end to end).
+    """
+
+    def __init__(self, model: str, exc: BaseException):
+        self.model = model
+        self.temperature = 0.0
+        self.last_attempts: int | None = None
+        self._exc = exc
+
+    def complete(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: Type[BaseModel],
+        max_retries: int = 2,
+    ) -> Any:
+        raise self._exc
 
 
 def build_pipeline_result(

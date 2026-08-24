@@ -31,7 +31,7 @@ class ArtifactLoggerTest(unittest.TestCase):
             payload = json.loads(serialized)
             artifact = RunArtifact.model_validate_json(serialized)
 
-            self.assertEqual(payload["schema_version"], "3.3")
+            self.assertEqual(payload["schema_version"], "3.4")
             self.assertEqual(artifact.metadata.run_number, 1)
             self.assertEqual(artifact.metadata.engine, "example/model:latest")
             self.assertEqual(artifact.metadata.pii_engine, "local-pii:latest")

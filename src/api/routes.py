@@ -10,6 +10,11 @@ from src.config import (
     load_scoring_weights,
 )
 from src.model.adapters import client_for_role
+from src.prompts.templates import (
+    EXTRACTION_PROMPT_VERSIONS,
+    MATCHING_PROMPT_VERSIONS,
+    PII_PROMPT_VERSIONS,
+)
 from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
 from src.services import (
     CandidateCV,
@@ -71,6 +76,7 @@ async def compare_documents(
                 engine=pii_client.model,
                 temperature=pii_client.temperature,
             ),
+            prompt_versions=PII_PROMPT_VERSIONS,
         )
 
         result = pipeline.run(
@@ -97,6 +103,7 @@ async def compare_documents(
                 temperature=pii_client.temperature,
                 fallback_used=_fallback_used(pii_client),
             ),
+            prompt_versions=EXTRACTION_PROMPT_VERSIONS,
         )
         artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
             result, config=run_config
@@ -146,6 +153,7 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
                 temperature=pii_client.temperature,
                 fallback_used=_fallback_used(pii_client),
             ),
+            prompt_versions=PII_PROMPT_VERSIONS,
         )
         artifact_path, _ = persist_ingestion(result, config)
     except (PDFTextExtractionError, ValueError) as exc:
@@ -201,6 +209,7 @@ async def match_cv(
                 engine=redacted_cv.pii_engine,
                 temperature=0.0,
             ),
+            prompt_versions=MATCHING_PROMPT_VERSIONS,
         )
         artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
             result, config=run_config

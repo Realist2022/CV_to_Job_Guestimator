@@ -28,6 +28,11 @@ from src.harness.evaluator import EvaluationReport, ThresholdEvaluator
 from src.harness.registry import pii_detectors, pipelines
 from src.harness.task_loader import TaskSpec, load_task
 from src.model.adapters import client_from_config
+from src.prompts.templates import (
+    EXTRACTION_PROMPT_VERSIONS,
+    MATCHING_PROMPT_VERSIONS,
+    PII_PROMPT_VERSIONS,
+)
 from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
 from src.schemas.ingestion import IngestionResult
 from src.schemas.pipeline import PipelineResult
@@ -137,6 +142,7 @@ class HarnessRunner:
                     engine=pii_client.model,
                     temperature=pii_client.temperature,
                 ),
+                prompt_versions=PII_PROMPT_VERSIONS,
             )
             run_kwargs["on_ingested"] = lambda ingestion_result: persist_ingestion(
                 ingestion_result,
@@ -164,6 +170,7 @@ class HarnessRunner:
                 engine=pii_client.model,
                 temperature=pii_client.temperature,
             ),
+            prompt_versions=EXTRACTION_PROMPT_VERSIONS,
         )
 
         logger = ArtifactLogger(output_dir=self.artifacts_dir)
@@ -202,6 +209,7 @@ class HarnessRunner:
                 engine=pii_client.model,
                 temperature=pii_client.temperature,
             ),
+            prompt_versions=PII_PROMPT_VERSIONS,
         )
         artifact_path, run_number = persist_ingestion(
             result,
@@ -260,6 +268,7 @@ class HarnessRunner:
                 engine=redacted_cv.pii_engine,
                 temperature=0.0,
             ),
+            prompt_versions=MATCHING_PROMPT_VERSIONS,
         )
         logger = ArtifactLogger(output_dir=self.artifacts_dir)
         artifact_path = logger.log_run(result, evaluation=evaluation, config=run_config)

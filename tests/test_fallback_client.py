@@ -7,7 +7,6 @@ failed" (see its docstring for why those specific types), RecordingClient
 """
 
 import unittest
-from typing import Any, Type
 
 from httpx import Request
 from instructor.core import InstructorRetryException
@@ -15,30 +14,11 @@ from openai import APIConnectionError
 from pydantic import BaseModel
 
 from src.services.llm_client import FallbackInstructorClient
-from tests.factories import RecordingClient
+from tests.factories import FailingClient, RecordingClient
 
 
 class Answer(BaseModel):
     text: str
-
-
-class FailingClient:
-    """Fake InstructorClient whose complete() always raises the given exception."""
-
-    def __init__(self, model: str, exc: BaseException):
-        self.model = model
-        self.temperature = 0.0
-        self.last_attempts: int | None = None
-        self._exc = exc
-
-    def complete(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        response_model: Type[BaseModel],
-        max_retries: int = 2,
-    ) -> Any:
-        raise self._exc
 
 
 def _connection_error(message: str) -> APIConnectionError:
