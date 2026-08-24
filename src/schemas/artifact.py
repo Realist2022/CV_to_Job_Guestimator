@@ -49,6 +49,16 @@ class RunConfig(BaseModel):
     pii_detectors: list[str] = Field(default_factory=list)
     evaluation_model: RunModelConfig
     pii_model: RunModelConfig
+    prompt_versions: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Version of each system prompt (src/prompts/templates.py) that "
+            "actually ran for this run, keyed by prompt name (e.g. "
+            "'job_requirements', 'skill_matcher', 'overall_experience', "
+            "'pii'). Keyed per prompt rather than per model role since "
+            "evaluation_model alone covers three distinct prompts."
+        ),
+    )
 
 
 class ArtifactMetadata(BaseModel):
@@ -65,7 +75,7 @@ class ArtifactMetadata(BaseModel):
 class RunArtifact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["3.0", "3.1", "3.2", "3.3"] = "3.3"
+    schema_version: Literal["3.0", "3.1", "3.2", "3.3", "3.4"] = "3.4"
     metadata: ArtifactMetadata
     config: RunConfig | None = None
     skills_evaluation: SkillMatchResult
@@ -124,6 +134,7 @@ class IngestionRunConfig(BaseModel):
     task_path: str | None = None
     pii_detectors: list[str] = Field(default_factory=list)
     pii_model: RunModelConfig
+    prompt_versions: dict[str, str] = Field(default_factory=dict)
 
 
 class IngestionArtifactMetadata(BaseModel):
@@ -146,7 +157,7 @@ class IngestionArtifact(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.1"
     metadata: IngestionArtifactMetadata
     config: IngestionRunConfig | None = None
     cv_id: str = Field(min_length=1)

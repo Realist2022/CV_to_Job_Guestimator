@@ -2,6 +2,28 @@ from typing import Final
 
 from src.schemas.pii import PIIKind
 
+# Bump the version alongside its prompt whenever the wording changes, so an
+# artifact's config.prompt_versions records exactly which prompt text
+# produced it — independent of which model executed it (see RunConfig in
+# src/schemas/artifact.py). Leave a version untouched if its prompt didn't
+# change.
+JOB_REQUIREMENTS_PROMPT_VERSION: Final = "1.0"
+SKILL_MATCHER_PROMPT_VERSION: Final = "1.0"
+OVERALL_EXPERIENCE_PROMPT_VERSION: Final = "1.1"
+PII_PROMPT_VERSION: Final = "1.0"
+
+# Convenience groupings for RunConfig.prompt_versions / IngestionRunConfig.prompt_versions,
+# matching which prompts each pipeline shape actually runs (see agents.py):
+# MatchingPipeline runs job_requirements + skill_matcher + overall_experience;
+# IngestionPipeline runs pii only; ExtractionPipeline (= ingestion + matching) runs all four.
+MATCHING_PROMPT_VERSIONS: Final = {
+    "job_requirements": JOB_REQUIREMENTS_PROMPT_VERSION,
+    "skill_matcher": SKILL_MATCHER_PROMPT_VERSION,
+    "overall_experience": OVERALL_EXPERIENCE_PROMPT_VERSION,
+}
+PII_PROMPT_VERSIONS: Final = {"pii": PII_PROMPT_VERSION}
+EXTRACTION_PROMPT_VERSIONS: Final = {**MATCHING_PROMPT_VERSIONS, **PII_PROMPT_VERSIONS}
+
 JOB_REQUIREMENTS_SYSTEM_PROMPT: Final = """Extract atomic technical and operational skill_names from a job description.
 
 Include specific domain tools, machinery, software, methodologies, frameworks, certifications, and technical skill_names.
@@ -42,7 +64,12 @@ OVERALL_EXPERIENCE_SYSTEM_PROMPT: Final = """Extract and classify the candidate'
 - Extract target_overall_years from explicit minimum overall experience only.
 - If the job description states a single minimum such as "3+ years", use that number.
 - If a range is given such as "2-5 years", use the lower bound.
-- If no minimum overall experience is stated, set target_overall_years to null.
+- Treat a years figure as the overall requirement even when it is phrased alongside
+  the role's core/primary technologies (e.g. "2-5 years' commercial experience with
+  React and Node.js" -> target_overall_years: 2), since that is the role's experience bar.
+- Only leave target_overall_years null when years are tied to a narrow, secondary
+  tool/certification unrelated to the role's main responsibilities, or no years figure
+  appears anywhere in the listing.
 
 2. Extract candidate roles from the CV:
 - Extract ONLY paid employment or professional contractor work experience.
