@@ -7,8 +7,8 @@ from src.schemas.pii import PIIKind
 # produced it — independent of which model executed it (see RunConfig in
 # src/schemas/artifact.py). Leave a version untouched if its prompt didn't
 # change.
-JOB_REQUIREMENTS_PROMPT_VERSION: Final = "1.0"
-SKILL_MATCHER_PROMPT_VERSION: Final = "1.0"
+JOB_REQUIREMENTS_PROMPT_VERSION: Final = "1.2"
+SKILL_MATCHER_PROMPT_VERSION: Final = "1.1"
 OVERALL_EXPERIENCE_PROMPT_VERSION: Final = "1.1"
 PII_PROMPT_VERSION: Final = "1.0"
 
@@ -28,9 +28,22 @@ JOB_REQUIREMENTS_SYSTEM_PROMPT: Final = """Extract atomic technical and operatio
 
 Include specific domain tools, machinery, software, methodologies, frameworks, certifications, and technical skill_names.
 Exclude generic soft skills such as hard working, communication, teamwork, and punctuality.
+Exclude vague qualitative descriptors that name no specific technology, tool, or named
+methodology, such as "modern development practices", "modern engineering practices",
+"modern web applications", or "fast-paced environment" — these are not independently
+verifiable against a CV. Keep concrete, named methodologies and practices such as
+"Agile", "CI/CD", "code reviews", or "test-driven development".
 Return one skill_name per record. Split all combined requirements into separate records.
 The skill_name field must contain only the skill name, without years-of-experience wording.
 Return each unique skill_name once, grounded only in the job description.
+
+When a requirement names a general category followed by a specific example marked as
+optional or preferred (in parentheses, or after "e.g."/"such as"/"including"), extract
+only the general category as the skill_name and drop the example and its qualifier.
+Example: "Exposure to cloud technologies (AWS preferred)" -> skill_name: "Cloud technologies".
+Do not create a second record for the example in this case.
+Only extract the specific named technology on its own when the text requires that
+technology directly, not merely as an example of a broader category.
 
 Expected JSON structure:
 {
@@ -54,7 +67,23 @@ Set matched to false when the CV does not show sufficient evidence.
 Evaluate skill_name only. Do not require dated or commercial evidence here.
 Do not extract, rename, summarize, or introduce skills in the evaluations.
 
-Treat specific tools or certifications as evidence for a broader requirement only when they directly fulfill it."""
+Treat specific tools or certifications as evidence for a broader requirement only when they directly fulfill it.
+
+Apply category-inclusion reasoning: when a requirement names a general category or
+practice, a specific CV item that is a well-known member of that category counts as
+a match, even if the CV never uses the requirement's exact wording.
+- "Relational databases" is satisfied by any named relational database the CV lists
+  (e.g. MySQL, PostgreSQL, SQLite, Oracle, SQL Server), not only PostgreSQL itself.
+- "Cloud technologies" is satisfied by any named cloud provider or service the CV
+  lists (e.g. AWS, Azure, GCP), even under a different section heading such as
+  "DevOps & Cloud".
+- A practice-based requirement such as "AI-assisted software development" is
+  satisfied by concrete CV evidence of that practice — a project description,
+  tool, or self-description naming AI/LLM/chatbot work — not only by the literal
+  phrase appearing in the CV.
+
+Ground every match in text that actually appears in the CV. Do not infer a category
+match from a requirement alone, and do not invent CV content that is not present."""
 
 
 OVERALL_EXPERIENCE_SYSTEM_PROMPT: Final = """Extract and classify the candidate's professional work experience against a target job.
