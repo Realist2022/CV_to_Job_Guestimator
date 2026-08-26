@@ -1,21 +1,25 @@
-"""Harness runner: task YAML -> resolved components -> run -> evaluate -> artifact.
+"""Harness runner: the one orchestration core behind both entry points.
 
-Three task shapes share this runner:
-  - pipeline: extraction  — one-shot compatibility path (raw CV in, full
-    result out). Goes through the generic `pipelines` registry, same as
-    before the ingestion/matching split.
-  - pipeline: ingestion    — PII redaction only. Persists the resulting
-    RedactedCV to CVIngestionStore so a later matching task can consume it.
-  - pipeline: matching      — skills/experience/scoring only, reading a
-    RedactedCV out of CVIngestionStore via task.inputs.redacted_cv_id.
+run_extraction/run_ingestion/run_matching each take a Resolved*Run (see
+resolved.py) — documents already parsed, clients and pipelines already
+constructed — and do only the source-agnostic part: run the pipeline,
+evaluate thresholds, persist the artifact, assemble a HarnessRunReport.
+This layer never sees a task YAML, a file path, or an UploadFile.
 
-ingestion/matching get their own branches rather than going through the
-`pipelines` registry: IngestionPipeline.run(cv) and
+Who produces the Resolved*Run depends on the trigger:
+  - CLI (main.py): run_task() loads tasks/*.yaml into a TaskSpec and hands
+    it to TaskResolver (task_resolver.py), which resolves components via
+    the pipelines/pii_detectors registries.
+  - Web API (src/api/routes.py): src/api/harness_adapter.py resolves
+    already-parsed HTTP inputs with client_for_role() and the concrete
+    pipeline classes, then calls the same run_* methods here.
+
+ingestion/matching keep their own run_* methods rather than sharing
+run_extraction: IngestionPipeline.run(cv) and
 MatchingPipeline.run(listing, redacted_cv) genuinely don't share
-ExtractionPipeline's run(listing, cv) -> PipelineResult contract that the
-registry was built around (that's the point of the split), so forcing them
-through the same generic call would just be a silent kwarg/shape mismatch
-waiting to happen.
+ExtractionPipeline's run(listing, cv) -> PipelineResult contract (that's
+the point of the ingestion/matching split), so forcing them through one
+generic call would just be a silent kwarg/shape mismatch waiting to happen.
 """
 
 import inspect
@@ -23,42 +27,41 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from src.config import read_yaml
 from src.harness.evaluator import EvaluationReport, ThresholdEvaluator
-from src.harness.registry import pii_detectors, pipelines
+from src.harness.resolved import (
+    ResolvedExtractionRun,
+    ResolvedIngestionRun,
+    ResolvedMatchingRun,
+    ResolvedRun,
+)
 from src.harness.task_loader import TaskSpec, load_task
-from src.model.adapters import client_from_config
+from src.harness.task_resolver import TaskResolver
 from src.prompts.templates import EXTRACTION_PROMPT_VERSIONS, MATCHING_PROMPT_VERSIONS
 from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
 from src.schemas.ingestion import IngestionResult
 from src.schemas.pipeline import PipelineResult
-from src.services.cv_store import CVIngestionStore
-from src.services.document_parser import CandidateCV, JobListing
-from src.services.extraction_pipeline import ExtractionPipeline
 from src.services.ingestion_persistence import persist_ingestion
-from src.services.ingestion_pipeline import IngestionPipeline
-from src.services.matching_pipeline import MatchingPipeline
-from src.services.pii_detector import PII_DETECTOR_FACTORIES, CompositePIIDetector, pii_run_model_config
-from src.services.scoring_engine import RelevanceScoringEngine
+from src.services.llm_client import CompletionClient, FallbackInstructorClient
+from src.services.pii_detector import pii_run_model_config
 from src.utils.artifact_logger import ArtifactLogger
-
-# Default component registrations. New implementations register alongside.
-# The "presidio" factory comes from PII_DETECTOR_FACTORIES so this registry
-# and ExtractionPipeline's/IngestionPipeline's own default (used outside
-# the harness, e.g. the web API) agree on what each detector name means.
-if "extraction" not in pipelines.names():
-    pipelines.register("extraction", ExtractionPipeline)
-for _name, _factory in PII_DETECTOR_FACTORIES.items():
-    if _name not in pii_detectors.names():
-        pii_detectors.register(_name, _factory)
 
 
 class HarnessRunReport(BaseModel):
-    task_name: str
+    task_name: str | None
     artifact_path: str
     run_number: int | None
     result: PipelineResult | IngestionResult
     evaluation: EvaluationReport
+
+
+def _fallback_used(client: CompletionClient) -> bool:
+    """Whether `client`'s most recent call was served by its fallback model
+    rather than its configured primary (always False for a plain
+    InstructorClient with no fallback configured). Computed here, once, so
+    every caller's RunConfig gets it — the CLI's pinned task clients are
+    never FallbackInstructorClients, the API's client_for_role() clients
+    may be."""
+    return isinstance(client, FallbackInstructorClient) and client.fallback_used
 
 
 class HarnessRunner:
@@ -68,71 +71,53 @@ class HarnessRunner:
         artifacts_dir: str | Path = "artifacts",
         redacted_cv_dir: str | Path = "redacted_cvs",
     ):
-        configs_dir = Path(configs_dir)
         self.artifacts_dir = artifacts_dir
         self.redacted_cv_dir = redacted_cv_dir
-        self.model_configs: dict = read_yaml(configs_dir / "llm.yaml")["models"]
-        self.default_weights: dict = read_yaml(configs_dir / "scoring.yaml")["weights"]
-        self.default_pii_detector_names: list[str] = read_yaml(configs_dir / "pii_policy.yaml")[
-            "detectors"
-        ]
-        self.verbose: bool = read_yaml(configs_dir / "pipeline.yaml").get("verbose", True)
+        self.resolver = TaskResolver(
+            configs_dir=configs_dir, redacted_cv_dir=redacted_cv_dir
+        )
 
-    def run(self, task: TaskSpec | str | Path) -> HarnessRunReport:
+    # -- CLI entry point: task YAML in, report out ------------------------
+
+    def run_task(self, task: TaskSpec | str | Path) -> HarnessRunReport:
         task_path = None if isinstance(task, TaskSpec) else str(task)
         if not isinstance(task, TaskSpec):
             task = load_task(task)
+        return self.run(self.resolver.resolve(task, task_path))
 
-        if task.pipeline == "ingestion":
-            return self._run_ingestion(task, task_path)
-        if task.pipeline == "matching":
-            return self._run_matching(task, task_path)
-        return self._run_extraction(task, task_path)
+    # -- Orchestration core: Resolved*Run in, report out ------------------
 
-    def _run_extraction(self, task: TaskSpec, task_path: str | None) -> HarnessRunReport:
-        evaluation_model_name = _require_model(task, "evaluation")
-        eval_client = client_from_config(self._model_config(evaluation_model_name))
-        pii_detector_names = task.pii_detectors or self.default_pii_detector_names
+    def run(self, resolved: ResolvedRun) -> HarnessRunReport:
+        if isinstance(resolved, ResolvedIngestionRun):
+            return self.run_ingestion(resolved)
+        if isinstance(resolved, ResolvedMatchingRun):
+            return self.run_matching(resolved)
+        return self.run_extraction(resolved)
 
-        detector = CompositePIIDetector(
-            *[pii_detectors.create(name) for name in pii_detector_names]
-        )
-        scoring_weights = task.scoring_weights or self.default_weights
-        scoring_engine = RelevanceScoringEngine(scoring_weights)
-        pipeline = pipelines.create(
-            task.pipeline,
-            client=eval_client,
-            pii_detector=detector,
-            scoring_engine=scoring_engine,
-        )
-
-        listing = _load_document(JobListing, task.inputs.job_listing, "job listing")
-        cv = _load_document(CandidateCV, task.inputs.candidate_cv, "candidate CV")
-
+    def run_extraction(self, resolved: ResolvedExtractionRun) -> HarnessRunReport:
         run_kwargs = {}
-        # Capability check, not isinstance(pipeline, ExtractionPipeline): the
-        # pipeline was just resolved dynamically from the `pipelines`
-        # registry, whose whole point is that a second implementation can be
-        # registered under "extraction" without editing this runner. What
-        # actually matters here is whether pipeline.run() accepts the
-        # on_ingested hook, not which concrete class produced it.
-        if "on_ingested" in inspect.signature(pipeline.run).parameters:
+        # Capability check, not isinstance(pipeline, ExtractionPipeline):
+        # the pipeline may come from the `pipelines` registry, whose whole
+        # point is that a second implementation can be registered under
+        # "extraction" without editing this runner. What actually matters
+        # here is whether pipeline.run() accepts the on_ingested hook, not
+        # which concrete class produced it.
+        if "on_ingested" in inspect.signature(resolved.pipeline.run).parameters:
             # So this one-shot run's redacted_cv_trace_id (see
             # RunArtifact/PipelineResult) always resolves to a real,
-            # persisted IngestionArtifact — the same guarantee the
-            # standalone "ingestion" task already gives, not something
-            # only the two-task ingest-then-match flow provides.
-            # pii_model is built from ingestion_result.pii_engine (set once
-            # redaction actually ran) rather than read off `detector`
-            # directly, so this keeps working against any pipeline.run()
-            # that honors the on_ingested contract — not just whichever
-            # concrete pipeline built `detector` above.
+            # persisted IngestionArtifact — the same guarantee a standalone
+            # ingestion run already gives, not something only the two-step
+            # ingest-then-match flow provides. pii_model is built from
+            # ingestion_result.pii_engine (set once redaction actually ran)
+            # rather than read off the pipeline's detector directly, so this
+            # keeps working against any pipeline.run() that honors the
+            # on_ingested contract — e.g. a test double.
             run_kwargs["on_ingested"] = lambda ingestion_result: persist_ingestion(
                 ingestion_result,
                 IngestionRunConfig(
-                    task_name=task.name,
-                    task_path=task_path,
-                    pii_detectors=pii_detector_names,
+                    task_name=resolved.metadata.task_name,
+                    task_path=resolved.metadata.task_path,
+                    pii_detectors=resolved.pii_detector_names,
                     pii_model=pii_run_model_config(ingestion_result.pii_engine),
                     prompt_versions={},
                 ),
@@ -140,20 +125,18 @@ class HarnessRunner:
                 artifacts_dir=self.artifacts_dir,
             )
 
-        result = pipeline.run(listing, cv, verbose=self.verbose, **run_kwargs)
-        evaluation = ThresholdEvaluator(task.evaluation).evaluate(result)
+        result = resolved.pipeline.run(
+            resolved.listing, resolved.cv, verbose=resolved.verbose, **run_kwargs
+        )
+        evaluation = ThresholdEvaluator(resolved.evaluation).evaluate(result)
 
         run_config = RunConfig(
-            task_name=task.name,
-            task_path=task_path,
-            pipeline=task.pipeline,
-            scoring_weights=scoring_weights,
-            pii_detectors=pii_detector_names,
-            evaluation_model=RunModelConfig(
-                name=evaluation_model_name,
-                engine=eval_client.model,
-                temperature=eval_client.temperature,
-            ),
+            task_name=resolved.metadata.task_name,
+            task_path=resolved.metadata.task_path,
+            pipeline="extraction",
+            scoring_weights=resolved.scoring_engine.weights,
+            pii_detectors=resolved.pii_detector_names,
+            evaluation_model=self._evaluation_model_config(resolved),
             pii_model=pii_run_model_config(result.pii_engine),
             prompt_versions=EXTRACTION_PROMPT_VERSIONS,
         )
@@ -162,28 +145,21 @@ class HarnessRunner:
         artifact_path = logger.log_run(result, evaluation=evaluation, config=run_config)
 
         return HarnessRunReport(
-            task_name=task.name,
+            task_name=resolved.metadata.task_name,
             artifact_path=artifact_path,
             run_number=logger.last_run_number,
             result=result,
             evaluation=evaluation,
         )
 
-    def _run_ingestion(self, task: TaskSpec, task_path: str | None) -> HarnessRunReport:
-        pii_detector_names = task.pii_detectors or self.default_pii_detector_names
-        detector = CompositePIIDetector(
-            *[pii_detectors.create(name) for name in pii_detector_names]
-        )
-        pipeline = IngestionPipeline(pii_detector=detector)
-
-        cv = _load_document(CandidateCV, task.inputs.candidate_cv, "candidate CV")
-        result = pipeline.run(cv, verbose=self.verbose)
-        evaluation = ThresholdEvaluator(task.evaluation).evaluate(result)
+    def run_ingestion(self, resolved: ResolvedIngestionRun) -> HarnessRunReport:
+        result = resolved.pipeline.run(resolved.cv, verbose=resolved.verbose)
+        evaluation = ThresholdEvaluator(resolved.evaluation).evaluate(result)
 
         ingestion_config = IngestionRunConfig(
-            task_name=task.name,
-            task_path=task_path,
-            pii_detectors=pii_detector_names,
+            task_name=resolved.metadata.task_name,
+            task_path=resolved.metadata.task_path,
+            pii_detectors=resolved.pii_detector_names,
             pii_model=pii_run_model_config(result.pii_engine),
             prompt_versions={},
         )
@@ -196,92 +172,52 @@ class HarnessRunner:
         )
 
         return HarnessRunReport(
-            task_name=task.name,
+            task_name=resolved.metadata.task_name,
             artifact_path=artifact_path,
             run_number=run_number,
             result=result,
             evaluation=evaluation,
         )
 
-    def _run_matching(self, task: TaskSpec, task_path: str | None) -> HarnessRunReport:
-        evaluation_model_name = _require_model(task, "evaluation")
-        eval_client = client_from_config(self._model_config(evaluation_model_name))
-        scoring_weights = task.scoring_weights or self.default_weights
-        scoring_engine = RelevanceScoringEngine(scoring_weights)
-        pipeline = MatchingPipeline(eval_client, scoring_engine=scoring_engine)
-
-        if not task.inputs.redacted_cv_id:
-            raise ValueError(
-                f"Task '{task.name}' uses pipeline: matching but sets no "
-                "inputs.redacted_cv_id. Run an 'ingestion' task against the "
-                "raw CV first, then pass the cv_id it produced here."
-            )
-        redacted_cv = CVIngestionStore(output_dir=self.redacted_cv_dir).load(
-            task.inputs.redacted_cv_id
+    def run_matching(self, resolved: ResolvedMatchingRun) -> HarnessRunReport:
+        result = resolved.pipeline.run(
+            resolved.listing, resolved.redacted_cv, verbose=resolved.verbose
         )
-        listing = _load_document(JobListing, task.inputs.job_listing, "job listing")
-
-        result = pipeline.run(listing, redacted_cv, verbose=self.verbose)
-        evaluation = ThresholdEvaluator(task.evaluation).evaluate(result)
+        evaluation = ThresholdEvaluator(resolved.evaluation).evaluate(result)
 
         run_config = RunConfig(
-            task_name=task.name,
-            task_path=task_path,
-            pipeline=task.pipeline,
-            scoring_weights=scoring_weights,
-            # No detector ran in this task; the CV arrived pre-redacted.
+            task_name=resolved.metadata.task_name,
+            task_path=resolved.metadata.task_path,
+            pipeline="matching",
+            scoring_weights=resolved.scoring_engine.weights,
+            # No detector ran in this run; the CV arrived pre-redacted.
             pii_detectors=[],
-            evaluation_model=RunModelConfig(
-                name=evaluation_model_name,
-                engine=eval_client.model,
-                temperature=eval_client.temperature,
-            ),
-            # No PII detector runs for a matching-only task at all — the CV
+            evaluation_model=self._evaluation_model_config(resolved),
+            # No PII detector runs for a matching-only run at all — the CV
             # arrived pre-redacted — so this reports the engine that
             # actually produced that earlier redaction, off the RedactedCV
             # itself, same as everywhere else.
-            pii_model=pii_run_model_config(redacted_cv.pii_engine),
+            pii_model=pii_run_model_config(resolved.redacted_cv.pii_engine),
             prompt_versions=MATCHING_PROMPT_VERSIONS,
         )
         logger = ArtifactLogger(output_dir=self.artifacts_dir)
         artifact_path = logger.log_run(result, evaluation=evaluation, config=run_config)
 
         return HarnessRunReport(
-            task_name=task.name,
+            task_name=resolved.metadata.task_name,
             artifact_path=artifact_path,
             run_number=logger.last_run_number,
             result=result,
             evaluation=evaluation,
         )
 
-    def _model_config(self, name: str) -> dict:
-        try:
-            return self.model_configs[name]
-        except KeyError:
-            known = ", ".join(sorted(self.model_configs))
-            raise KeyError(
-                f"Unknown model config '{name}' in configs/llm.yaml. Known: {known}"
-            ) from None
-
-
-def _require_model(task: TaskSpec, role: str) -> str:
-    name = getattr(task.models, role)
-    if not name:
-        raise ValueError(
-            f"Task '{task.name}' uses pipeline: {task.pipeline} but sets no "
-            f"models.{role}."
+    @staticmethod
+    def _evaluation_model_config(
+        resolved: ResolvedExtractionRun | ResolvedMatchingRun,
+    ) -> RunModelConfig:
+        return RunModelConfig(
+            name=resolved.eval_model_name,
+            engine=resolved.eval_client.model,
+            temperature=resolved.eval_client.temperature,
+            fallback_used=_fallback_used(resolved.eval_client),
         )
-    return name
-
-
-def _load_document(document_type, candidate_paths: list[str], label: str):
-    for raw_path in candidate_paths:
-        path = Path(raw_path)
-        if not path.exists():
-            continue
-        if path.suffix.lower() == ".pdf":
-            return document_type.from_pdf(str(path), cache_text=True)
-        return document_type.from_path(str(path))
-    raise FileNotFoundError(
-        f"No {label} found. Tried: {', '.join(candidate_paths)}"
-    )

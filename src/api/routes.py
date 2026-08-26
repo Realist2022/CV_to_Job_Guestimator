@@ -1,99 +1,51 @@
+"""HTTP layer only: parse the request, delegate execution to the harness.
+
+Each endpoint does exactly three things — turn the multipart upload into
+domain objects, ask harness_adapter to resolve a Resolved*Run from them,
+and hand that to the shared HarnessRunner (one instance, on app.state; see
+src/api/app.py). All pipeline execution, threshold evaluation, and artifact
+persistence happens inside HarnessRunner.run_* — the same code path the CLI
+harness (main.py -> run_task) goes through.
+"""
+
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
+from src.api import harness_adapter
 from src.api.schemas import CompareResponse, IngestResponse, MatchResponse
-from src.config import (
-    load_pii_detector_names,
-    load_pipeline_model_names,
-    load_scoring_weights,
-)
-from src.model.adapters import client_for_role
-from src.prompts.templates import EXTRACTION_PROMPT_VERSIONS, MATCHING_PROMPT_VERSIONS
-from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
-from src.services import (
-    CandidateCV,
-    CVIngestionStore,
-    CVNotFoundError,
-    ExtractionPipeline,
-    FallbackInstructorClient,
-    IngestionPipeline,
-    JobListing,
-    MatchingPipeline,
-    PDFTextExtractionError,
-    RelevanceScoringEngine,
-)
-from src.services.ingestion_persistence import persist_ingestion
-from src.services.pii_detector import pii_run_model_config
-from src.utils import ArtifactLogger
+from src.harness.runner import HarnessRunner
+from src.services import CandidateCV, JobListing, PDFTextExtractionError
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 router = APIRouter()
 
 
-def _fallback_used(client: object) -> bool:
-    """Whether `client`'s most recent call was served by its fallback model
-    rather than its configured primary (always False for a plain
-    InstructorClient with no fallback configured)."""
-    return isinstance(client, FallbackInstructorClient) and client.fallback_used
+def _runner(request: Request) -> HarnessRunner:
+    return request.app.state.harness_runner
 
 
 @router.post("/api/compare", response_model=CompareResponse)
 async def compare_documents(
+    request: Request,
     job_listing: UploadFile = File(...),
     candidate_cv: UploadFile = File(...),
     skills_weight: float | None = Form(None),
     work_experience_weight: float | None = Form(None),
 ) -> CompareResponse:
     try:
-        scoring_engine = _scoring_engine(skills_weight, work_experience_weight)
         listing = await _load_document(job_listing, JobListing, "job listing")
         cv = await _load_document(candidate_cv, CandidateCV, "candidate CV")
 
-        model_names = load_pipeline_model_names()
-        eval_client = client_for_role("evaluation")
-
-        pipeline = ExtractionPipeline(eval_client, scoring_engine=scoring_engine)
-
-        # So this run's redacted_cv_trace_id (see RunArtifact/PipelineResult)
-        # always resolves to a real, persisted IngestionArtifact — the same
-        # guarantee /api/ingest already gives, not something only the
-        # ingest-then-match endpoint pair provides. pii_model is built from
-        # ingestion_result.pii_engine (set once redaction actually ran)
-        # rather than read off `pipeline` directly, so this keeps working
-        # against any pipeline.run() that honors the on_ingested contract —
-        # e.g. a test double standing in for ExtractionPipeline.
-        result = pipeline.run(
+        resolved = harness_adapter.resolve_extraction(
             listing,
             cv,
-            verbose=False,
-            on_ingested=lambda ingestion_result: persist_ingestion(
-                ingestion_result,
-                IngestionRunConfig(
-                    pii_detectors=load_pii_detector_names(),
-                    pii_model=pii_run_model_config(ingestion_result.pii_engine),
-                    prompt_versions={},
-                ),
-            ),
+            skills_weight=skills_weight,
+            work_experience_weight=work_experience_weight,
         )
-        run_config = RunConfig(
-            pipeline="extraction",
-            scoring_weights=scoring_engine.weights,
-            pii_detectors=load_pii_detector_names(),
-            evaluation_model=RunModelConfig(
-                name=model_names["evaluation"],
-                engine=eval_client.model,
-                temperature=eval_client.temperature,
-                fallback_used=_fallback_used(eval_client),
-            ),
-            pii_model=pii_run_model_config(result.pii_engine),
-            prompt_versions=EXTRACTION_PROMPT_VERSIONS,
-        )
-        artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
-            result, config=run_config
-        )
+        report = _runner(request).run_extraction(resolved)
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -102,21 +54,24 @@ async def compare_documents(
             detail=f"Compare failed: {type(exc).__name__}: {exc}",
         ) from exc
 
+    result = report.result
     return CompareResponse(
-        artifact_path=artifact_path,
+        artifact_path=report.artifact_path,
         engine=result.engine,
         pii_engine=result.pii_engine,
         execution_seconds=result.execution_seconds,
         metrics=result.metrics,
         scorecard=result.scorecard,
-        scoring_weights=scoring_engine.weights,
+        scoring_weights=resolved.scoring_engine.weights,
         skills_evaluation=result.skills_eval,
         overall_experience=result.overall_experience,
     )
 
 
 @router.post("/api/ingest", response_model=IngestResponse)
-async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
+async def ingest_cv(
+    request: Request, candidate_cv: UploadFile = File(...)
+) -> IngestResponse:
     """Redact a raw CV once and persist it to CVIngestionStore. Returns a
     cv_id — pass it to /api/match to evaluate against any number of job
     listings without re-uploading or re-redacting the CV. The response
@@ -125,16 +80,7 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
     the wire once ingestion is done."""
     try:
         cv = await _load_document(candidate_cv, CandidateCV, "candidate CV")
-
-        pipeline = IngestionPipeline()
-        result = pipeline.run(cv, verbose=False)
-
-        config = IngestionRunConfig(
-            pii_detectors=load_pii_detector_names(),
-            pii_model=pii_run_model_config(result.pii_engine),
-            prompt_versions={},
-        )
-        artifact_path, _ = persist_ingestion(result, config)
+        report = _runner(request).run_ingestion(harness_adapter.resolve_ingestion(cv))
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -143,9 +89,10 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
             detail=f"Ingest failed: {type(exc).__name__}: {exc}",
         ) from exc
 
+    result = report.result
     return IngestResponse(
         cv_id=result.cv_id,
-        artifact_path=artifact_path,
+        artifact_path=report.artifact_path,
         pii_engine=result.pii_engine,
         execution_seconds=result.execution_seconds,
         pii_span_count=len(result.pii_spans),
@@ -154,6 +101,7 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
 
 @router.post("/api/match", response_model=MatchResponse)
 async def match_cv(
+    request: Request,
     job_listing: UploadFile = File(...),
     cv_id: str = Form(...),
     skills_weight: float | None = Form(None),
@@ -162,36 +110,15 @@ async def match_cv(
     """Match a job listing against a CV previously ingested via /api/ingest.
     No PII model is called here — the CV arrives already redacted."""
     try:
-        scoring_engine = _scoring_engine(skills_weight, work_experience_weight)
         listing = await _load_document(job_listing, JobListing, "job listing")
-        try:
-            redacted_cv = CVIngestionStore().load(cv_id)
-        except CVNotFoundError as exc:
-            raise ValueError(str(exc)) from exc
 
-        eval_client = client_for_role("evaluation")
-        pipeline = MatchingPipeline(eval_client, scoring_engine=scoring_engine)
-        result = pipeline.run(listing, redacted_cv, verbose=False)
-
-        run_config = RunConfig(
-            pipeline="matching",
-            scoring_weights=scoring_engine.weights,
-            pii_detectors=[],
-            evaluation_model=RunModelConfig(
-                name=load_pipeline_model_names()["evaluation"],
-                engine=eval_client.model,
-                temperature=eval_client.temperature,
-                fallback_used=_fallback_used(eval_client),
-            ),
-            # No PII detector runs for /api/match at all — the CV arrived
-            # pre-redacted from a prior /api/ingest call — so this reports
-            # the engine that actually produced that earlier redaction.
-            pii_model=pii_run_model_config(redacted_cv.pii_engine),
-            prompt_versions=MATCHING_PROMPT_VERSIONS,
+        resolved = harness_adapter.resolve_matching(
+            listing,
+            cv_id,
+            skills_weight=skills_weight,
+            work_experience_weight=work_experience_weight,
         )
-        artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
-            result, config=run_config
-        )
+        report = _runner(request).run_matching(resolved)
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -200,30 +127,17 @@ async def match_cv(
             detail=f"Match failed: {type(exc).__name__}: {exc}",
         ) from exc
 
+    result = report.result
     return MatchResponse(
-        artifact_path=artifact_path,
+        artifact_path=report.artifact_path,
         engine=result.engine,
         execution_seconds=result.execution_seconds,
         metrics=result.metrics,
         scorecard=result.scorecard,
-        scoring_weights=scoring_engine.weights,
+        scoring_weights=resolved.scoring_engine.weights,
         skills_evaluation=result.skills_eval,
         overall_experience=result.overall_experience,
     )
-
-
-def _scoring_engine(
-    skills_weight: float | None,
-    work_experience_weight: float | None,
-) -> RelevanceScoringEngine:
-    weights = load_scoring_weights()
-    if skills_weight is not None:
-        weights["skills_match"] = skills_weight
-    if work_experience_weight is not None:
-        weights["work_experience"] = work_experience_weight
-    if any(weight < 0 or weight > 1 for weight in weights.values()):
-        raise ValueError("Scoring weights must be between 0.0 and 1.0.")
-    return RelevanceScoringEngine(weights)
 
 
 async def _load_document[DocumentT: (JobListing, CandidateCV)](

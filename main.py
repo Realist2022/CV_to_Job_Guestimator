@@ -11,7 +11,7 @@ def main():
 
     runner = HarnessRunner()
     try:
-        report = runner.run(task_path)
+        report = runner.run_task(task_path)
     except (FileNotFoundError, PDFTextExtractionError, ValueError) as exc:
         print(f"Error: {exc}")
         return

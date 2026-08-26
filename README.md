@@ -64,7 +64,7 @@ ArtifactLogger
 
 The harness knows how to load a task, resolve components, run a pipeline stage, evaluate the result, and log an artifact. It contains no CV/job matching business logic; that stays in `src/services/` and `src/schemas/`.
 
-The web UI wraps the same pipelines with a drag-and-drop upload page and `/api/compare`, `/api/ingest`, and `/api/match` endpoints (see [Running the Web UI](#running-the-web-ui)).
+Both entry points go through the same `HarnessRunner` orchestration core. Resolution (turning a trigger into parsed documents plus constructed clients/pipelines — a `Resolved*Run`, see `src/harness/resolved.py`) is what differs per trigger: the CLI resolves a task YAML via `src/harness/task_resolver.py` and the registries, while the web UI's `/api/compare`, `/api/ingest`, and `/api/match` endpoints resolve an HTTP upload via `src/api/harness_adapter.py` (role-based `client_for_role`, per-request weight overrides, no pass/fail thresholds) and delegate execution to the shared runner on `app.state` (see [Running the Web UI](#running-the-web-ui)).
 
 ### Entry Point
 
@@ -81,7 +81,10 @@ The web UI wraps the same pipelines with a drag-and-drop upload page and `/api/c
 
 | Module | Responsibility |
 | --- | --- |
-| `src/harness/runner.py` | Loads configs, resolves components, dispatches a task to the right pipeline shape, and logs the artifact. |
+| `src/harness/runner.py` | Orchestration core for CLI and API alike: runs a resolved pipeline stage, evaluates thresholds, and logs the artifact. |
+| `src/harness/resolved.py` | The `Resolved*Run` contract between the resolvers and the runner: documents parsed, clients/pipelines constructed. |
+| `src/harness/task_resolver.py` | CLI-side resolution: `TaskSpec` -> `Resolved*Run` via named model configs and the component registries. |
+| `src/api/harness_adapter.py` | API-side resolution: parsed HTTP uploads -> `Resolved*Run` via `client_for_role` and per-request weight overrides. |
 | `src/harness/task_loader.py` | Parses and validates task YAML into `TaskSpec` models (`pipeline: extraction \| ingestion \| matching`). |
 | `src/harness/registry.py` | Name-to-factory registries for pipelines and PII detectors; enforces `PipelineProtocol` on anything registered as a pipeline. |
 | `src/harness/evaluator.py` | Checks pipeline results against task pass/fail thresholds. |

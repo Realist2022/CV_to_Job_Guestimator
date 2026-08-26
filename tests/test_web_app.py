@@ -39,7 +39,7 @@ class FakeLogger:
     def __init__(self, *_args, **_kwargs):
         self.last_run_number = None
 
-    def log_run(self, _result, config=None):
+    def log_run(self, _result, config=None, evaluation=None):
         self.last_run_number = 1
         return "artifacts/run-test.json"
 
@@ -55,16 +55,20 @@ class FakeClient:
 
 
 def test_compare_endpoint_accepts_text_uploads_without_real_model_calls(monkeypatch):
-    monkeypatch.setattr("src.api.routes.ExtractionPipeline", FakePipeline)
-    monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeLogger)
+    # Pipelines and clients resolve in src.api.harness_adapter; the run
+    # itself (and its ArtifactLogger.log_run) happens in
+    # src.harness.runner — patch each where it's looked up.
+    monkeypatch.setattr("src.api.harness_adapter.ExtractionPipeline", FakePipeline)
+    monkeypatch.setattr("src.harness.runner.ArtifactLogger", FakeLogger)
     # /api/compare's on_ingested hook persists through
-    # src.services.ingestion_persistence.persist_ingestion, not routes.py's
-    # own CVIngestionStore/ArtifactLogger names — patch it there too, or
-    # this "without_real_model_calls" test silently writes real files.
+    # src.services.ingestion_persistence.persist_ingestion, not the
+    # runner's own CVIngestionStore/ArtifactLogger names — patch it there
+    # too, or this "without_real_model_calls" test silently writes real
+    # files.
     monkeypatch.setattr("src.services.ingestion_persistence.CVIngestionStore", FakeCVIngestionStore)
     monkeypatch.setattr("src.services.ingestion_persistence.ArtifactLogger", FakeLogger)
     monkeypatch.setattr(
-        "src.api.routes.client_for_role",
+        "src.api.harness_adapter.client_for_role",
         lambda role: FakeClient(model=f"fake-{role}"),
     )
 
@@ -168,14 +172,15 @@ class FakeArtifactLogger:
 
 
 def test_ingest_endpoint_persists_redacted_cv_and_returns_cv_id(monkeypatch):
-    monkeypatch.setattr("src.api.routes.IngestionPipeline", FakeIngestionPipeline)
+    monkeypatch.setattr("src.api.harness_adapter.IngestionPipeline", FakeIngestionPipeline)
     # /api/ingest persists through
     # src.services.ingestion_persistence.persist_ingestion, so that's where
-    # CVIngestionStore/ArtifactLogger need patching, not routes.py.
+    # CVIngestionStore/ArtifactLogger need patching, not the runner.
     monkeypatch.setattr("src.services.ingestion_persistence.CVIngestionStore", FakeCVIngestionStore)
     monkeypatch.setattr("src.services.ingestion_persistence.ArtifactLogger", FakeArtifactLogger)
     monkeypatch.setattr(
-        "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
+        "src.api.harness_adapter.client_for_role",
+        lambda role: FakeClient(model=f"fake-{role}"),
     )
 
     client = TestClient(app)
@@ -194,18 +199,19 @@ def test_ingest_endpoint_persists_redacted_cv_and_returns_cv_id(monkeypatch):
 
 
 def test_match_endpoint_uses_previously_ingested_cv_with_no_pii_call(monkeypatch):
-    monkeypatch.setattr("src.api.routes.IngestionPipeline", FakeIngestionPipeline)
-    # /api/match's own CVIngestionStore().load(cv_id)/ArtifactLogger().log_run
-    # live in routes.py, but /api/ingest's save happens through
+    monkeypatch.setattr("src.api.harness_adapter.IngestionPipeline", FakeIngestionPipeline)
+    # /api/match's CVIngestionStore().load(cv_id) lives in
+    # src.api.harness_adapter, but /api/ingest's save happens through
     # src.services.ingestion_persistence.persist_ingestion — both need
     # patching to the same FakeCVIngestionStore so the two calls share state.
-    monkeypatch.setattr("src.api.routes.CVIngestionStore", FakeCVIngestionStore)
+    monkeypatch.setattr("src.api.harness_adapter.CVIngestionStore", FakeCVIngestionStore)
     monkeypatch.setattr("src.services.ingestion_persistence.CVIngestionStore", FakeCVIngestionStore)
     monkeypatch.setattr("src.services.ingestion_persistence.ArtifactLogger", FakeArtifactLogger)
-    monkeypatch.setattr("src.api.routes.MatchingPipeline", FakeMatchingPipeline)
-    monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeArtifactLogger)
+    monkeypatch.setattr("src.api.harness_adapter.MatchingPipeline", FakeMatchingPipeline)
+    monkeypatch.setattr("src.harness.runner.ArtifactLogger", FakeArtifactLogger)
     monkeypatch.setattr(
-        "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
+        "src.api.harness_adapter.client_for_role",
+        lambda role: FakeClient(model=f"fake-{role}"),
     )
 
     client = TestClient(app)
@@ -228,9 +234,10 @@ def test_match_endpoint_uses_previously_ingested_cv_with_no_pii_call(monkeypatch
 
 
 def test_match_endpoint_rejects_unknown_cv_id(monkeypatch):
-    monkeypatch.setattr("src.api.routes.CVIngestionStore", FakeCVIngestionStore)
+    monkeypatch.setattr("src.api.harness_adapter.CVIngestionStore", FakeCVIngestionStore)
     monkeypatch.setattr(
-        "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
+        "src.api.harness_adapter.client_for_role",
+        lambda role: FakeClient(model=f"fake-{role}"),
     )
 
     client = TestClient(app)
