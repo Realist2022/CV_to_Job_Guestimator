@@ -28,11 +28,7 @@ from src.harness.evaluator import EvaluationReport, ThresholdEvaluator
 from src.harness.registry import pii_detectors, pipelines
 from src.harness.task_loader import TaskSpec, load_task
 from src.model.adapters import client_from_config
-from src.prompts.templates import (
-    EXTRACTION_PROMPT_VERSIONS,
-    MATCHING_PROMPT_VERSIONS,
-    PII_PROMPT_VERSIONS,
-)
+from src.prompts.templates import EXTRACTION_PROMPT_VERSIONS, MATCHING_PROMPT_VERSIONS
 from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
 from src.schemas.ingestion import IngestionResult
 from src.schemas.pipeline import PipelineResult
@@ -42,20 +38,19 @@ from src.services.extraction_pipeline import ExtractionPipeline
 from src.services.ingestion_persistence import persist_ingestion
 from src.services.ingestion_pipeline import IngestionPipeline
 from src.services.matching_pipeline import MatchingPipeline
-from src.services.pii_detector import PII_DETECTOR_FACTORIES, CompositePIIDetector
+from src.services.pii_detector import PII_DETECTOR_FACTORIES, CompositePIIDetector, pii_run_model_config
 from src.services.scoring_engine import RelevanceScoringEngine
 from src.utils.artifact_logger import ArtifactLogger
 
 # Default component registrations. New implementations register alongside.
-# The "regex"/"model"/"presidio" factories come from PII_DETECTOR_FACTORIES
-# so this registry and ExtractionPipeline's/IngestionPipeline's own default
-# (used outside the harness, e.g. the web API) agree on what each detector
-# name means.
+# The "presidio" factory comes from PII_DETECTOR_FACTORIES so this registry
+# and ExtractionPipeline's/IngestionPipeline's own default (used outside
+# the harness, e.g. the web API) agree on what each detector name means.
 if "extraction" not in pipelines.names():
     pipelines.register("extraction", ExtractionPipeline)
 for _name, _factory in PII_DETECTOR_FACTORIES.items():
     if _name not in pii_detectors.names():
-        pii_detectors.register(_name, lambda pii_client=None, _factory=_factory, **_: _factory(pii_client))
+        pii_detectors.register(_name, _factory)
 
 
 class HarnessRunReport(BaseModel):
@@ -96,23 +91,17 @@ class HarnessRunner:
 
     def _run_extraction(self, task: TaskSpec, task_path: str | None) -> HarnessRunReport:
         evaluation_model_name = _require_model(task, "evaluation")
-        pii_model_name = _require_model(task, "pii")
         eval_client = client_from_config(self._model_config(evaluation_model_name))
-        pii_client = client_from_config(self._model_config(pii_model_name))
         pii_detector_names = task.pii_detectors or self.default_pii_detector_names
 
         detector = CompositePIIDetector(
-            *[
-                pii_detectors.create(name, pii_client=pii_client)
-                for name in pii_detector_names
-            ]
+            *[pii_detectors.create(name) for name in pii_detector_names]
         )
         scoring_weights = task.scoring_weights or self.default_weights
         scoring_engine = RelevanceScoringEngine(scoring_weights)
         pipeline = pipelines.create(
             task.pipeline,
             client=eval_client,
-            pii_client=pii_client,
             pii_detector=detector,
             scoring_engine=scoring_engine,
         )
@@ -133,20 +122,20 @@ class HarnessRunner:
             # persisted IngestionArtifact — the same guarantee the
             # standalone "ingestion" task already gives, not something
             # only the two-task ingest-then-match flow provides.
-            ingestion_config = IngestionRunConfig(
-                task_name=task.name,
-                task_path=task_path,
-                pii_detectors=pii_detector_names,
-                pii_model=RunModelConfig(
-                    name=pii_model_name,
-                    engine=pii_client.model,
-                    temperature=pii_client.temperature,
-                ),
-                prompt_versions=PII_PROMPT_VERSIONS,
-            )
+            # pii_model is built from ingestion_result.pii_engine (set once
+            # redaction actually ran) rather than read off `detector`
+            # directly, so this keeps working against any pipeline.run()
+            # that honors the on_ingested contract — not just whichever
+            # concrete pipeline built `detector` above.
             run_kwargs["on_ingested"] = lambda ingestion_result: persist_ingestion(
                 ingestion_result,
-                ingestion_config,
+                IngestionRunConfig(
+                    task_name=task.name,
+                    task_path=task_path,
+                    pii_detectors=pii_detector_names,
+                    pii_model=pii_run_model_config(ingestion_result.pii_engine),
+                    prompt_versions={},
+                ),
                 redacted_cv_dir=self.redacted_cv_dir,
                 artifacts_dir=self.artifacts_dir,
             )
@@ -165,11 +154,7 @@ class HarnessRunner:
                 engine=eval_client.model,
                 temperature=eval_client.temperature,
             ),
-            pii_model=RunModelConfig(
-                name=pii_model_name,
-                engine=pii_client.model,
-                temperature=pii_client.temperature,
-            ),
+            pii_model=pii_run_model_config(result.pii_engine),
             prompt_versions=EXTRACTION_PROMPT_VERSIONS,
         )
 
@@ -185,16 +170,11 @@ class HarnessRunner:
         )
 
     def _run_ingestion(self, task: TaskSpec, task_path: str | None) -> HarnessRunReport:
-        pii_model_name = _require_model(task, "pii")
-        pii_client = client_from_config(self._model_config(pii_model_name))
         pii_detector_names = task.pii_detectors or self.default_pii_detector_names
         detector = CompositePIIDetector(
-            *[
-                pii_detectors.create(name, pii_client=pii_client)
-                for name in pii_detector_names
-            ]
+            *[pii_detectors.create(name) for name in pii_detector_names]
         )
-        pipeline = IngestionPipeline(pii_detector=detector, pii_client=pii_client)
+        pipeline = IngestionPipeline(pii_detector=detector)
 
         cv = _load_document(CandidateCV, task.inputs.candidate_cv, "candidate CV")
         result = pipeline.run(cv, verbose=self.verbose)
@@ -204,12 +184,8 @@ class HarnessRunner:
             task_name=task.name,
             task_path=task_path,
             pii_detectors=pii_detector_names,
-            pii_model=RunModelConfig(
-                name=pii_model_name,
-                engine=pii_client.model,
-                temperature=pii_client.temperature,
-            ),
-            prompt_versions=PII_PROMPT_VERSIONS,
+            pii_model=pii_run_model_config(result.pii_engine),
+            prompt_versions={},
         )
         artifact_path, run_number = persist_ingestion(
             result,
@@ -260,14 +236,11 @@ class HarnessRunner:
                 engine=eval_client.model,
                 temperature=eval_client.temperature,
             ),
-            pii_model=RunModelConfig(
-                # No pii_client exists for a matching-only run; report the
-                # engine that actually produced this CV's redaction rather
-                # than fabricate a named configs/llm.yaml key we don't have.
-                name=redacted_cv.pii_engine,
-                engine=redacted_cv.pii_engine,
-                temperature=0.0,
-            ),
+            # No PII detector runs for a matching-only task at all — the CV
+            # arrived pre-redacted — so this reports the engine that
+            # actually produced that earlier redaction, off the RedactedCV
+            # itself, same as everywhere else.
+            pii_model=pii_run_model_config(redacted_cv.pii_engine),
             prompt_versions=MATCHING_PROMPT_VERSIONS,
         )
         logger = ArtifactLogger(output_dir=self.artifacts_dir)

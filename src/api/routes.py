@@ -10,11 +10,7 @@ from src.config import (
     load_scoring_weights,
 )
 from src.model.adapters import client_for_role
-from src.prompts.templates import (
-    EXTRACTION_PROMPT_VERSIONS,
-    MATCHING_PROMPT_VERSIONS,
-    PII_PROMPT_VERSIONS,
-)
+from src.prompts.templates import EXTRACTION_PROMPT_VERSIONS, MATCHING_PROMPT_VERSIONS
 from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
 from src.services import (
     CandidateCV,
@@ -29,6 +25,7 @@ from src.services import (
     RelevanceScoringEngine,
 )
 from src.services.ingestion_persistence import persist_ingestion
+from src.services.pii_detector import pii_run_model_config
 from src.utils import ArtifactLogger
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -57,34 +54,28 @@ async def compare_documents(
 
         model_names = load_pipeline_model_names()
         eval_client = client_for_role("evaluation")
-        pii_client = client_for_role("pii")
 
-        pipeline = ExtractionPipeline(
-            eval_client,
-            pii_client=pii_client,
-            scoring_engine=scoring_engine,
-        )
+        pipeline = ExtractionPipeline(eval_client, scoring_engine=scoring_engine)
 
         # So this run's redacted_cv_trace_id (see RunArtifact/PipelineResult)
         # always resolves to a real, persisted IngestionArtifact — the same
         # guarantee /api/ingest already gives, not something only the
-        # ingest-then-match endpoint pair provides.
-        ingestion_config = IngestionRunConfig(
-            pii_detectors=load_pii_detector_names(),
-            pii_model=RunModelConfig(
-                name=model_names["pii"],
-                engine=pii_client.model,
-                temperature=pii_client.temperature,
-            ),
-            prompt_versions=PII_PROMPT_VERSIONS,
-        )
-
+        # ingest-then-match endpoint pair provides. pii_model is built from
+        # ingestion_result.pii_engine (set once redaction actually ran)
+        # rather than read off `pipeline` directly, so this keeps working
+        # against any pipeline.run() that honors the on_ingested contract —
+        # e.g. a test double standing in for ExtractionPipeline.
         result = pipeline.run(
             listing,
             cv,
             verbose=False,
             on_ingested=lambda ingestion_result: persist_ingestion(
-                ingestion_result, ingestion_config
+                ingestion_result,
+                IngestionRunConfig(
+                    pii_detectors=load_pii_detector_names(),
+                    pii_model=pii_run_model_config(ingestion_result.pii_engine),
+                    prompt_versions={},
+                ),
             ),
         )
         run_config = RunConfig(
@@ -97,12 +88,7 @@ async def compare_documents(
                 temperature=eval_client.temperature,
                 fallback_used=_fallback_used(eval_client),
             ),
-            pii_model=RunModelConfig(
-                name=model_names["pii"],
-                engine=pii_client.model,
-                temperature=pii_client.temperature,
-                fallback_used=_fallback_used(pii_client),
-            ),
+            pii_model=pii_run_model_config(result.pii_engine),
             prompt_versions=EXTRACTION_PROMPT_VERSIONS,
         )
         artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
@@ -140,20 +126,13 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
     try:
         cv = await _load_document(candidate_cv, CandidateCV, "candidate CV")
 
-        model_names = load_pipeline_model_names()
-        pii_client = client_for_role("pii")
-        pipeline = IngestionPipeline(pii_client=pii_client)
+        pipeline = IngestionPipeline()
         result = pipeline.run(cv, verbose=False)
 
         config = IngestionRunConfig(
             pii_detectors=load_pii_detector_names(),
-            pii_model=RunModelConfig(
-                name=model_names["pii"],
-                engine=pii_client.model,
-                temperature=pii_client.temperature,
-                fallback_used=_fallback_used(pii_client),
-            ),
-            prompt_versions=PII_PROMPT_VERSIONS,
+            pii_model=pii_run_model_config(result.pii_engine),
+            prompt_versions={},
         )
         artifact_path, _ = persist_ingestion(result, config)
     except (PDFTextExtractionError, ValueError) as exc:
@@ -204,11 +183,10 @@ async def match_cv(
                 temperature=eval_client.temperature,
                 fallback_used=_fallback_used(eval_client),
             ),
-            pii_model=RunModelConfig(
-                name=redacted_cv.pii_engine,
-                engine=redacted_cv.pii_engine,
-                temperature=0.0,
-            ),
+            # No PII detector runs for /api/match at all — the CV arrived
+            # pre-redacted from a prior /api/ingest call — so this reports
+            # the engine that actually produced that earlier redaction.
+            pii_model=pii_run_model_config(redacted_cv.pii_engine),
             prompt_versions=MATCHING_PROMPT_VERSIONS,
         )
         artifact_path = ArtifactLogger(output_dir="artifacts").log_run(

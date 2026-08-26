@@ -33,16 +33,14 @@ class ExtractionPipeline:
         self,
         client: CompletionClient,
         pii_detector: Optional[PIIDetector] = None,
-        pii_client: Optional[CompletionClient] = None,
         scoring_engine: Optional[RelevanceScoringEngine] = None,
     ):
         self.client = client
-        self.ingestion = IngestionPipeline(pii_detector=pii_detector, pii_client=pii_client)
+        self.ingestion = IngestionPipeline(pii_detector=pii_detector)
         self.matching = MatchingPipeline(client, scoring_engine=scoring_engine)
-        # Preserved for existing callers that read these off an
+        # Preserved for existing callers that read this off an
         # ExtractionPipeline instance directly (e.g. harness/runner.py's
-        # RunConfig construction reads pii_client.model/.temperature).
-        self.pii_client = self.ingestion.pii_client
+        # RunConfig construction reads pii_detector.engine_name).
         self.pii_detector = self.ingestion.pii_detector
         self.scoring_engine = self.matching.scoring_engine
 

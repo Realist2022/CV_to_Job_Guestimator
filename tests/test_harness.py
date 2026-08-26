@@ -20,16 +20,15 @@ def test_load_task_parses_all_shipped_tasks():
     for path in Path("tasks").glob("*.yaml"):
         task = load_task(path)
         assert task.name
-        # models.evaluation/.pii and inputs.job_listing/.candidate_cv are
-        # each optional now (see task_loader.py): which ones a task must
-        # set depends on its pipeline, since "ingestion" never calls an
-        # evaluation model and "matching" never calls a PII model or takes
-        # a raw candidate_cv path.
+        # models.evaluation and inputs.job_listing/.candidate_cv are each
+        # optional now (see task_loader.py): which ones a task must set
+        # depends on its pipeline, since "ingestion" never calls an
+        # evaluation model. There's no models.pii at all — PII redaction
+        # runs entirely through presidio, with no LLM model to select for
+        # any pipeline shape.
         if task.pipeline != "ingestion":
             assert task.models.evaluation
             assert task.inputs.job_listing
-        if task.pipeline != "matching":
-            assert task.models.pii
         if task.pipeline == "matching":
             assert task.inputs.redacted_cv_id
         else:
@@ -68,4 +67,4 @@ def test_runner_registers_default_components():
     from src.harness.registry import pii_detectors, pipelines
 
     assert "extraction" in pipelines.names()
-    assert {"regex", "model", "presidio"} <= set(pii_detectors.names())
+    assert {"presidio"} <= set(pii_detectors.names())

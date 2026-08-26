@@ -6,7 +6,6 @@ pipeline: extraction
 
 models:
   evaluation: cv-guestimator
-  pii: local-llama
 
 inputs:
   job_listing:

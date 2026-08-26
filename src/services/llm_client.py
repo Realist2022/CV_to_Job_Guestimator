@@ -13,10 +13,10 @@ class CompletionClient(Protocol):
     InstructorClient and FallbackInstructorClient both satisfy this without
     declaring it explicitly (that's what makes FallbackInstructorClient a
     drop-in replacement for InstructorClient wherever one is accepted).
-    Agents and pipelines type their `client`/`pii_client` parameters as this
-    instead of InstructorClient specifically, so that either can be passed
-    without a type-checker complaint — see RecordingClient in
-    tests/factories.py for a third implementation, used in tests.
+    Agents and pipelines type their `client` parameters as this instead of
+    InstructorClient specifically, so that either can be passed without a
+    type-checker complaint — see RecordingClient in tests/factories.py for
+    a third implementation, used in tests.
     """
 
     @property

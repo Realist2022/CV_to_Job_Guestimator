@@ -19,8 +19,19 @@ from src.services.cv_store import CVIngestionStore, CVNotFoundError
 from src.services.document_parser import CandidateCV, JobListing
 from src.services.ingestion_pipeline import IngestionPipeline
 from src.services.matching_pipeline import MatchingPipeline
-from src.services.pii_detector import RegexPIIDetector
+from src.services.pii_detector import PIIDetector
 from tests.factories import RecordingClient
+
+
+class _FakeEmailDetector(PIIDetector):
+    """Minimal PIIDetector for testing IngestionPipeline's own plumbing —
+    this test isn't concerned with detection quality, so there's no need
+    to pay presidio's spaCy load cost for it."""
+
+    def detect(self, cv: CandidateCV) -> list[TextSpan]:
+        if "jane@example.com" not in cv.text:
+            return []
+        return [TextSpan(kind="other_identifier", text="jane@example.com")]
 
 
 class CVIngestionStoreTest(unittest.TestCase):
@@ -61,10 +72,7 @@ class CVIngestionStoreTest(unittest.TestCase):
 
 class IngestionPipelineTest(unittest.TestCase):
     def test_run_produces_redacted_cv_with_matching_cv_id(self):
-        pii_client = RecordingClient("llama3.2:latest", {})
-        pipeline = IngestionPipeline(
-            pii_detector=RegexPIIDetector(), pii_client=pii_client
-        )
+        pipeline = IngestionPipeline(pii_detector=_FakeEmailDetector())
 
         result = pipeline.run(CandidateCV("Contact: jane@example.com"), verbose=False)
 
@@ -72,7 +80,7 @@ class IngestionPipelineTest(unittest.TestCase):
         self.assertIn("jane@example.com", [s.text for s in result.pii_spans])
         self.assertNotIn("jane@example.com", result.redacted_cv.text)
         self.assertEqual([span.step for span in result.trace], ["pii_redaction"])
-        self.assertEqual(result.pii_engine, "llama3.2:latest")
+        self.assertEqual(result.pii_engine, "_FakeEmailDetector")
 
 
 class MatchingPipelineTest(unittest.TestCase):
@@ -87,7 +95,6 @@ class MatchingPipelineTest(unittest.TestCase):
         module_names = set(vars(module))
         self.assertNotIn("CandidateCV", module_names)
         self.assertNotIn("PIIDetector", module_names)
-        self.assertNotIn("PIIAgent", module_names)
 
     def test_run_produces_pipeline_result_from_redacted_cv(self):
         client = RecordingClient(

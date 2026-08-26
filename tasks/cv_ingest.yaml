@@ -6,14 +6,10 @@ description: >
   the cv_id it prints/logs, without ever re-touching the raw text.
 pipeline: ingestion
 
-models:
+models: {}
   # No models.evaluation: an ingestion-only task never calls an evaluation
-  # model, so it's simply omitted (see task_loader.py's ModelSelection).
-  pii: local-llama
-
-pii_detectors:
-  - regex
-  - model
+  # model. There's no models.pii either — PII redaction runs entirely
+  # through presidio, with no LLM in the loop at all.
 
 inputs:
   candidate_cv:

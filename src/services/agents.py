@@ -7,7 +7,6 @@ from pydantic import create_model, model_validator
 from src.prompts.templates import (
     JOB_REQUIREMENTS_SYSTEM_PROMPT,
     OVERALL_EXPERIENCE_SYSTEM_PROMPT,
-    PII_SYSTEM_PROMPT,
     SKILL_MATCHER_SYSTEM_PROMPT,
 )
 from src.schemas.experience import (
@@ -15,14 +14,13 @@ from src.schemas.experience import (
     OverallExperienceResponse,
 )
 from src.schemas.ingestion import RedactedCV
-from src.schemas.pii import PIIOutput
 from src.schemas.requirements import (
     JobRequirement,
     JobRequirementsOutput,
     SkillEvaluationDecision,
     SkillEvaluationOutput,
 )
-from src.services.document_parser import CandidateCV, JobListing
+from src.services.document_parser import JobListing
 from src.services.llm_client import CompletionClient
 
 _SKILL_NAME_ALIASES = {
@@ -247,20 +245,3 @@ class OverallExperienceAgent:
             else result.overall_experience
         )
         return _backfill_overall_experience_dates(output, cv.text)
-
-
-class PIIAgent:
-    """Identifies personally identifying information in a CV."""
-
-    system_prompt = PII_SYSTEM_PROMPT
-
-    def __init__(self, client: CompletionClient):
-        self.client = client
-
-    def run(self, cv: CandidateCV) -> Optional[PIIOutput]:
-        user_message = f"CV:\n{cv.text}"
-        return self.client.complete(
-            system_prompt=self.system_prompt,
-            user_prompt=user_message,
-            response_model=PIIOutput,
-        )

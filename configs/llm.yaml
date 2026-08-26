@@ -15,27 +15,6 @@ models:
     api_key: ollama
     temperature: 0.0
 
-  # Smaller/faster stock model, for A/B testing PII detection latency
-  # against local-llama. Requires: ollama pull llama3.2:1b
-  local-llama-1b:
-    provider: ollama
-    model: llama3.2:1b
-    base_url: http://localhost:11434/v1
-    api_key: ollama
-    temperature: 0.0
-
-  # Already-local reasoning-distilled model, for A/B testing. Note: it
-  # "thinks" (chain-of-thought) before answering, so it can generate more
-  # tokens than a plain instruction-tuned model despite being smaller —
-  # check pii_redaction's "attempts" in PIPELINE TRACE, a retry there means
-  # its output isn't parsing cleanly as structured JSON on the first try.
-  local-deepseek-1.5b:
-    provider: ollama
-    model: deepseek-r1:1.5b
-    base_url: http://localhost:11434/v1
-    api_key: ollama
-    temperature: 0.0
-
   # Fine-tuned LoRA model served by Ollama (see docker/ollama/Modelfile).
   # Enable once the model has been built with `ollama create`.
   cv-guestimator:

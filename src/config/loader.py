@@ -48,13 +48,14 @@ def load_model_config(name: str) -> dict:
 
 
 def load_pipeline_model_names() -> dict[str, str]:
+    # Only "evaluation" is a real model role now: PII redaction runs
+    # entirely through presidio (see pii_detector.py), with no LLM in the
+    # loop and so nothing to select a model config for.
     pipeline_config = load_yaml("pipeline.yaml")
     models = pipeline_config.get("models")
-    if not isinstance(models, dict) or "evaluation" not in models or "pii" not in models:
-        raise ValueError(
-            "configs/pipeline.yaml must define models.evaluation and models.pii."
-        )
-    return {"evaluation": models["evaluation"], "pii": models["pii"]}
+    if not isinstance(models, dict) or "evaluation" not in models:
+        raise ValueError("configs/pipeline.yaml must define models.evaluation.")
+    return {"evaluation": models["evaluation"]}
 
 
 def load_pipeline_fallback_names() -> dict[str, str]:
