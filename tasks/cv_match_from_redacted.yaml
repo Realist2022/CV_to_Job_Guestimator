@@ -10,8 +10,9 @@ description: >
 pipeline: matching
 
 models:
-  # No models.pii: a matching-only task never calls a PII model — the CV
-  # arrived pre-redacted (see task_loader.py's ModelSelection).
+  # No models.pii field exists at all — PII redaction runs entirely
+  # through presidio, with no LLM in the loop for any task. This task's CV
+  # arrived pre-redacted from a prior "ingestion" run anyway (see above).
   evaluation: local-llama
 
 inputs:

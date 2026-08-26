@@ -1,28 +1,26 @@
 from typing import Final
 
-from src.schemas.pii import PIIKind
-
 # Bump the version alongside its prompt whenever the wording changes, so an
 # artifact's config.prompt_versions records exactly which prompt text
 # produced it — independent of which model executed it (see RunConfig in
 # src/schemas/artifact.py). Leave a version untouched if its prompt didn't
 # change.
-JOB_REQUIREMENTS_PROMPT_VERSION: Final = "1.2"
-SKILL_MATCHER_PROMPT_VERSION: Final = "1.1"
-OVERALL_EXPERIENCE_PROMPT_VERSION: Final = "1.1"
-PII_PROMPT_VERSION: Final = "1.0"
+JOB_REQUIREMENTS_PROMPT_VERSION: Final = "1.3"
+SKILL_MATCHER_PROMPT_VERSION: Final = "1.2"
+OVERALL_EXPERIENCE_PROMPT_VERSION: Final = "1.2"
 
-# Convenience groupings for RunConfig.prompt_versions / IngestionRunConfig.prompt_versions,
-# matching which prompts each pipeline shape actually runs (see agents.py):
-# MatchingPipeline runs job_requirements + skill_matcher + overall_experience;
-# IngestionPipeline runs pii only; ExtractionPipeline (= ingestion + matching) runs all four.
+# Convenience grouping for RunConfig.prompt_versions, matching which prompts
+# MatchingPipeline actually runs (see agents.py). PII redaction (presidio —
+# see src/services/presidio_detector.py) has no LLM prompt at all, so
+# ExtractionPipeline (= ingestion + matching) reports the same three
+# prompts as MatchingPipeline; IngestionPipeline reports an empty
+# prompt_versions dict.
 MATCHING_PROMPT_VERSIONS: Final = {
     "job_requirements": JOB_REQUIREMENTS_PROMPT_VERSION,
     "skill_matcher": SKILL_MATCHER_PROMPT_VERSION,
     "overall_experience": OVERALL_EXPERIENCE_PROMPT_VERSION,
 }
-PII_PROMPT_VERSIONS: Final = {"pii": PII_PROMPT_VERSION}
-EXTRACTION_PROMPT_VERSIONS: Final = {**MATCHING_PROMPT_VERSIONS, **PII_PROMPT_VERSIONS}
+EXTRACTION_PROMPT_VERSIONS: Final = MATCHING_PROMPT_VERSIONS
 
 JOB_REQUIREMENTS_SYSTEM_PROMPT: Final = """Extract atomic technical and operational skill_names from a job description.
 
@@ -44,6 +42,16 @@ Example: "Exposure to cloud technologies (AWS preferred)" -> skill_name: "Cloud 
 Do not create a second record for the example in this case.
 Only extract the specific named technology on its own when the text requires that
 technology directly, not merely as an example of a broader category.
+
+When a requirement names a general category and then states the exact required
+instantiation of that category in the same sentence (e.g. via "specifically
+requiring", "specifically", or by naming the only acceptable tool/method), treat
+the general category and the specific instantiation as ONE requirement, not two.
+Extract only the specific instantiation as the skill_name, and do not create a
+separate record for the general category that wraps it.
+Example: "A strong foundation in digital literacy, specifically requiring 2 years
+of experience using Google Workspace for Education" -> skill_name: "Google
+Workspace for Education". Do not also create a record for "digital literacy".
 
 Expected JSON structure:
 {
@@ -81,6 +89,20 @@ a match, even if the CV never uses the requirement's exact wording.
   satisfied by concrete CV evidence of that practice — a project description,
   tool, or self-description naming AI/LLM/chatbot work — not only by the literal
   phrase appearing in the CV.
+- A professional registration or licensing requirement (e.g. "New Zealand
+  Practising Certificate") is satisfied by CV evidence of full registration or
+  licensure with the relevant regulatory body, even when worded differently
+  (e.g. "Fully Registered Teacher (NZTC)").
+- A jurisdiction- or system-specific experience requirement (e.g. "teaching
+  experience in a New Zealand secondary school") is satisfied by CV evidence
+  that uses that jurisdiction's characteristic terminology, curriculum, or role
+  titles (e.g. NCEA levels, a Wellington-based school, Dean/Form Teacher roles),
+  even without the literal phrase appearing.
+
+These are illustrative examples from a few domains, not an exhaustive list — apply
+the same category-inclusion and equivalent-terminology reasoning in whatever
+professional domain the CV and requirement belong to (medicine, trades, education,
+finance, etc.), not only software or technology.
 
 Ground every match in text that actually appears in the CV. Do not infer a category
 match from a requirement alone, and do not invent CV content that is not present."""
@@ -110,6 +132,7 @@ OVERALL_EXPERIENCE_SYSTEM_PROMPT: Final = """Extract and classify the candidate'
 
 3. Classify relevance for each role:
 - Set is_relevant true only when the role provides directly transferable experience to the target job's responsibilities.
+- Base is_relevant on the role's full set of listed duties/bullets, not just one representative bullet — a role is relevant if ANY of its responsibilities directly matches a target job responsibility, even if other bullets in the same role do not.
 - Provide a brief, evidence-based match_rationale referencing specific job responsibilities and specific CV experience.
 - Do not use generic statements such as "software experience is relevant".
 - Do not assume skills or responsibilities not present in the text.
@@ -137,33 +160,4 @@ Expected JSON structure:
   }
 }
 """
-
-
-_PII_KIND_VALUES = "\n".join(f"- {kind.value}" for kind in PIIKind)
-
-PII_SYSTEM_PROMPT: Final = f"""Find every piece of personally identifying text in this CV.
-
-Copy each snippet word for word, exactly as it appears in the CV text. Do not tidy, reformat, or alter it.
-
-Return only actual PII spans. If text is not PII, omit it completely; do not classify it under a fallback category.
-Every span.kind must use one of these exact enum values:
-{_PII_KIND_VALUES}
-Never invent or return any other kind, including job_title, employer, skill, education, or employment_date.
-Return an empty spans list when the CV contains no PII.
-
-STRICT MAPPING RULES:
-- Use person_name ONLY for the candidate's personal name and referee names.
-- Use street_address ONLY for specific residential or home street addresses.
-- Use date_of_birth ONLY for actual birth dates. NEVER use this for graduation, course, or employment year ranges.
-- Use nationality ONLY for citizenship or residency status.
-- Use marital_or_family ONLY for marital or family status.
-- Use other_identifier ONLY for explicit contact or ID fields (email, phone, mobile, LinkedIn/GitHub URLs, driver's licences, IRD numbers).
-
-CRITICAL EXCLUSIONS (DO NOT EXTRACT):
-- NEVER extract Employer / Company Names (e.g., "FOODSTUFFS July 2025-October 2025" -> DO NOT EXTRACT (Employer name and employment period), "CRANE AND CARTAGE" -> DO NOT EXTRACT (Employer name), "MISSION READY DIPLOMA" -> DO NOT EXTRACT (Educational provider/qualification), "District Health Board" -> DO NOT EXTRACT (Employer name)).
-- NEVER extract Job Titles or Roles (e.g., Software Engineer, Hiab Operator, Technician, Manager).
-- NEVER extract Educational Institutions, Diplomas, or Certificates (e.g., Mission Ready, NZQA, University).
-- NEVER extract Employment dates or Project names.
-- NEVER extract Employer/Company Names, Job Titles, Educational Institutions, Diplomas, or Employment Date Ranges.
-- If a piece of text is a job title, company, skill, qualification, work achievement, or other CV content, IT IS NOT PII. Omit it from spans."""
 

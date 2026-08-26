@@ -1,7 +1,6 @@
 from .agents import (
     JobRequirementsAgent,
     OverallExperienceAgent,
-    PIIAgent,
     SkillMatcherAgent,
 )
 from .cv_store import CVIngestionStore, CVNotFoundError
@@ -21,7 +20,6 @@ __all__ = [
     "JobRequirementsAgent",
     "SkillMatcherAgent",
     "OverallExperienceAgent",
-    "PIIAgent",
     "CVIngestionStore",
     "CVNotFoundError",
     "ExtractionPipeline",

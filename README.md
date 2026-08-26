@@ -92,9 +92,9 @@ The web UI wraps the same pipelines with a drag-and-drop upload page and `/api/c
 | `src/config/loader.py` | Loads YAML-backed project configuration and `.env` values. |
 | `src/services/document_parser.py` | Defines source document types and extracts text from PDF files using `pypdf`, PyMuPDF fallback, and OCR fallback. |
 | `src/services/llm_client.py` | Wraps the OpenAI-compatible client with Instructor for structured Pydantic outputs. |
-| `src/services/agents.py` | Implements the PII, requirement extraction, skill matching, and overall experience agents. |
-| `src/services/pii_detector.py` | Regex and model-based PII detectors, composed into a `CompositePIIDetector`. |
-| `src/services/presidio_detector.py` | Local spaCy/Presidio NER-based PII detector — no LLM call, an alternative to the model-based detector. |
+| `src/services/agents.py` | Implements the requirement extraction, skill matching, and overall experience agents. |
+| `src/services/pii_detector.py` | Shared PII detector base/composite (`CompositePIIDetector`) and validation guards; composes detectors named in `configs/pii_policy.yaml`. |
+| `src/services/presidio_detector.py` | The PII detector: local spaCy/Presidio NER + custom pattern recognizers — no LLM call, fully deterministic. |
 | `src/services/ingestion_pipeline.py` | Standalone pipeline: redacts a raw CV once and produces a `RedactedCV`. |
 | `src/services/matching_pipeline.py` | Standalone pipeline: matches a `RedactedCV` against a job listing. Never imports `CandidateCV` or a PII detector. |
 | `src/services/extraction_pipeline.py` | One-shot compatibility wrapper: runs ingestion then matching and returns one combined result. |
@@ -121,15 +121,15 @@ The web UI wraps the same pipelines with a drag-and-drop upload page and `/api/c
 
 Runs are described declaratively:
 
-- `configs/llm.yaml` defines named model configurations (provider, model, base URL, API key or `api_key_env`, temperature). It ships with `gemini-flash`, a few local Ollama models for A/B testing (`local-llama`, `local-llama-1b`, `local-deepseek-1.5b`), and a placeholder for a fine-tuned `cv-guestimator` build.
+- `configs/llm.yaml` defines named model configurations (provider, model, base URL, API key or `api_key_env`, temperature) for the `evaluation` role — the only LLM role left, since PII redaction has no LLM in the loop at all. It ships with `gemini-flash`, `local-llama`, and a placeholder for a fine-tuned `cv-guestimator` build.
 - `configs/scoring.yaml` holds the default scoring weights.
-- `configs/pii_policy.yaml` lists which PII detectors compose the composite detector, in order — `regex` and `model` by default, with a local NER-based `presidio` detector (no LLM call) also registered and available to swap in project-wide or per task.
+- `configs/pii_policy.yaml` lists which PII detector(s) compose the composite detector — `presidio` (spaCy NER plus its own registry of custom pattern recognizers, including the NZ-specific IRD/driver's-licence/postcode formats) is the only one, fully local with no LLM call for PII at all.
 - `configs/pipeline.yaml` holds pipeline runtime defaults such as verbosity and the default model selection, plus an optional `fallback_models` mapping (see below).
 - `configs/deployment.yaml` documents ports and image names used by Docker.
 
 Tasks under `tasks/` pick the pipeline shape, models, inputs, and evaluation thresholds. A task's `pipeline:` field is one of:
 
-| Pipeline | Reads | Produces | Calls a PII model? |
+| Pipeline | Reads | Produces | Runs PII redaction? |
 | --- | --- | --- | --- |
 | `extraction` | a raw CV path + job listing | a full match result | yes |
 | `ingestion` | a raw CV path | a `RedactedCV`, persisted via `CVIngestionStore` | yes |
@@ -139,10 +139,7 @@ Tasks under `tasks/` pick the pipeline shape, models, inputs, and evaluation thr
 | --- | --- | --- |
 | `tasks/cv_job_match.yaml` | `extraction` | Full comparison with the cloud evaluation model. |
 | `tasks/cv_ingest.yaml` | `ingestion` | Redacts a raw CV once and persists it, printing the `cv_id` to reuse. |
-| `tasks/cv_match_from_redacted.yaml` | `matching` | Matches a job listing against a previously-ingested `redacted_cv_id`, with no PII model call. |
-| `tasks/pii_redaction.yaml` | `extraction` | Fully local run that asserts PII spans were actually redacted. |
-| `tasks/pii_presidio_eval.yaml` | `extraction` | Same documents, PII redaction routed through `presidio` instead of `model`, to A/B coverage. |
-| `tasks/pii_1b_eval.yaml` / `tasks/pii_deepseek_eval.yaml` | `extraction` | A/B a smaller/alternate local PII model's latency and retry ("attempts") behavior. |
+| `tasks/cv_match_from_redacted.yaml` | `matching` | Matches a job listing against a previously-ingested `redacted_cv_id`, with no PII detector call at all. |
 | `tasks/model_eval.yaml` | `extraction` | Benchmarks a candidate evaluation model against pass/fail thresholds. |
 
 An `extraction` task looks like:
@@ -152,7 +149,6 @@ name: cv_job_match
 pipeline: extraction
 models:
   evaluation: gemini-flash
-  pii: local-llama
 inputs:
   job_listing:
     - dataSet/tradeMeJobListing/Job_listing.txt
@@ -164,7 +160,7 @@ evaluation:
   min_final_relevance: 0
 ```
 
-The first existing path in each input list wins, so TXT files take precedence over PDFs. An `ingestion` task omits `models.evaluation` and `inputs.job_listing`; a `matching` task omits `models.pii` and `inputs.candidate_cv`, setting `inputs.redacted_cv_id` instead (see `tasks/cv_ingest.yaml` / `tasks/cv_match_from_redacted.yaml` for both). `.vscode/task.schema.json` gives editor validation for all three shapes — regenerate it after changing `TaskSpec` with `uv run python scripts/gen_task_schema.py`.
+The first existing path in each input list wins, so TXT files take precedence over PDFs. There's no `models.pii` field at all — PII redaction runs entirely through presidio, with no LLM model to select for any pipeline shape. An `ingestion` task omits `models.evaluation` and `inputs.job_listing`; a `matching` task omits `inputs.candidate_cv`, setting `inputs.redacted_cv_id` instead (see `tasks/cv_ingest.yaml` / `tasks/cv_match_from_redacted.yaml` for both). `.vscode/task.schema.json` gives editor validation for all three shapes — regenerate it after changing `TaskSpec` with `uv run python scripts/gen_task_schema.py`.
 
 ## Model Configuration
 
@@ -294,7 +290,7 @@ Three endpoints mirror the harness's three pipeline shapes:
 | --- | --- | --- |
 | `POST /api/compare` | `pipeline: extraction` | Job listing + raw CV in, full match result out. Also persists the redacted CV and its `IngestionArtifact` the same way `/api/ingest` does. |
 | `POST /api/ingest` | `pipeline: ingestion` | Raw CV in, `cv_id` out. The response never carries PII spans or redacted text — only a count — since that's exactly what this endpoint exists to keep off the wire. |
-| `POST /api/match` | `pipeline: matching` | Job listing + a previously-returned `cv_id` in, full match result out. No PII model is called — the CV arrives already redacted. |
+| `POST /api/match` | `pipeline: matching` | Job listing + a previously-returned `cv_id` in, full match result out. No PII detector runs at all — the CV arrives already redacted. |
 
 All three write the same artifact JSON files under `artifacts/` as the CLI.
 
@@ -328,7 +324,7 @@ Date ranges are expected in `YYYY-MM` format. Values such as `Present`, `Current
 
 ## Tests
 
-The test suite covers artifact logging, pipeline privacy/redaction behavior, the ingestion/matching split (including that `matching_pipeline.py` never imports `CandidateCV` or a PII detector), requirement scoring, document parsing, both PII detectors (model-based and `presidio`), the web API, and the harness (task loading, registries, and threshold evaluation). Shared test doubles and builders (a fake LLM client, a schema-valid `PipelineResult` factory) live in `tests/factories.py`, a plain importable module rather than a pytest-fixture-only `conftest.py`, since the suite mixes `unittest.TestCase` classes with plain pytest functions.
+The test suite covers artifact logging, pipeline privacy/redaction behavior, the ingestion/matching split (including that `matching_pipeline.py` never imports `CandidateCV` or a PII detector), requirement scoring, document parsing, the `presidio` PII detector, the web API, and the harness (task loading, registries, and threshold evaluation). Shared test doubles and builders (a fake LLM client, a schema-valid `PipelineResult` factory) live in `tests/factories.py`, a plain importable module rather than a pytest-fixture-only `conftest.py`, since the suite mixes `unittest.TestCase` classes with plain pytest functions.
 
 ```powershell
 uv run pytest
@@ -377,11 +373,7 @@ The repository is configured to ignore:
 |   |-- cv_job_match.yaml
 |   |-- cv_ingest.yaml
 |   |-- cv_match_from_redacted.yaml
-|   |-- model_eval.yaml
-|   |-- pii_redaction.yaml
-|   |-- pii_presidio_eval.yaml
-|   |-- pii_1b_eval.yaml
-|   `-- pii_deepseek_eval.yaml
+|   `-- model_eval.yaml
 |-- src/
 |   |-- __init__.py
 |   |-- web_app.py        # compatibility shim for src.api.app

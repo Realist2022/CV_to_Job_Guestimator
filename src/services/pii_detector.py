@@ -3,10 +3,9 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime
 from typing import Callable, Dict, Final, List, Optional
 
+from src.schemas.artifact import RunModelConfig
 from src.schemas.pii import TextSpan
-from src.services.agents import PIIAgent
 from src.services.document_parser import CandidateCV, normalise
-from src.services.llm_client import CompletionClient
 
 # Keywords that should never be tagged under marital_or_family
 FORBIDDEN_REDACTION_KEYWORDS: Final = [
@@ -122,73 +121,14 @@ class PIIDetector(ABC):
     def rejections(self) -> List[Dict[str, str]]:
         return []
 
-
-class RegexPIIDetector(PIIDetector):
-    PATTERNS = [
-        ("email", EMAIL_PATTERN),
-        ("phone", re.compile(r"(?:\+?64[\s-]?|\b0)(?:2\d{1,2}|[3-9])[\s-]?\d{3}[\s-]?\d{3,4}\b")),
-        ("ird_number", re.compile(r"\b\d{2,3}-\d{3}-\d{3}\b")),
-        ("nz_drivers_licence", re.compile(r"\b[A-Z]{2}\d{6}\b")),
-        ("url", re.compile(r"\bhttps?://[^\s,;]+|\b(?:www\.|linkedin\.com/|github\.com/)[^\s,;]+")),
-        ("postcode_line", re.compile(r"\b(?:Auckland|Wellington|Christchurch|Hamilton|Dunedin|Tauranga|Napier|Nelson)\s+\d{4}\b", re.I)),
-    ]
-
-    def detect(self, cv: CandidateCV) -> List[TextSpan]:
-        spans, seen = [], set()
-        for kind, pattern in self.PATTERNS:
-            for match in pattern.finditer(cv.text):
-                text = match.group(0).strip().rstrip(".,;")
-                if text and text.lower() not in seen:
-                    seen.add(text.lower())
-                    spans.append(TextSpan(kind, text))
-        return spans
-
-
-class ModelPIIDetector(PIIDetector):
-    def __init__(self, agent: PIIAgent):
-        self.agent = agent
-        self._rejections: List[Dict[str, str]] = []
-
     @property
-    def rejections(self) -> List[Dict[str, str]]:
-        return self._rejections
-
-    def detect(self, cv: CandidateCV) -> List[TextSpan]:
-        self._rejections = []
-        result = self.agent.run(cv=cv)
-        if result is None:
-            raise RuntimeError("Local PII analysis failed; cloud evaluation was not started.")
-        
-        spans, seen = [], set()
-        for span in result.spans:
-            kind_val = span.kind.value
-            key = normalise(span.text)
-            
-            if not key or key in seen:
-                continue
-
-            # 1. Document verification check
-            if not cv.contains(span.text):
-                self._rejections.append({
-                    "reason": "not_in_document", 
-                    "kind": kind_val, 
-                    "text": span.text
-                })
-                continue
-
-            # 2. Heuristic false-positive check (protects dates & qualifications)
-            if not is_valid_pii_span(span.text, kind_val):
-                self._rejections.append({
-                    "reason": "validation_guard_rejected", 
-                    "kind": kind_val, 
-                    "text": span.text
-                })
-                continue
-
-            seen.add(key)
-            spans.append(TextSpan(kind_val, span.text.strip()))
-            
-        return spans
+    def engine_name(self) -> str:
+        """Identifies which detector (and, where relevant, which underlying
+        model) actually produced a run's redaction — recorded verbatim as
+        pii_engine/pii_model.engine in RedactedCV/IngestionResult/RunConfig
+        artifacts. Defaults to the class name; PresidioPIIDetector overrides
+        this with its actual spaCy model name."""
+        return type(self).__name__
 
 
 class CompositePIIDetector(PIIDetector):
@@ -198,6 +138,10 @@ class CompositePIIDetector(PIIDetector):
     @property
     def rejections(self) -> List[Dict[str, str]]:
         return [r for d in self.detectors for r in d.rejections]
+
+    @property
+    def engine_name(self) -> str:
+        return "+".join(d.engine_name for d in self.detectors)
 
     def detect(self, cv: CandidateCV) -> List[TextSpan]:
         spans, seen = [], set()
@@ -210,10 +154,10 @@ class CompositePIIDetector(PIIDetector):
         return spans
 
 
-def _build_presidio_detector(_pii_client: Optional[CompletionClient]) -> PIIDetector:
+def _build_presidio_detector() -> PIIDetector:
     # Imported lazily so importing this module never pulls in spacy/presidio
-    # (and their model-load cost) unless "presidio" is actually enabled in
-    # configs/pii_policy.yaml.
+    # (and their model-load cost) unless something actually asks for a PII
+    # detector.
     from src.config import load_presidio_config
     from src.services.presidio_detector import DEFAULT_SCORE_THRESHOLD, PresidioPIIDetector
 
@@ -228,26 +172,31 @@ def _build_presidio_detector(_pii_client: Optional[CompletionClient]) -> PIIDete
 # nothing calls the harness, e.g. the web API) build from this map so a
 # name means the same thing everywhere instead of two hardcoded defaults
 # drifting apart.
-#
-# "presidio" ignores the pii_client argument entirely: it's a local
-# NER+regex detector (see presidio_detector.py) with no LLM in the loop, an
-# alternative to "model" rather than a replacement for it. Composed with
-# "regex" via configs/pii_policy.yaml or a task's `pii_detectors` override
-# (see tasks/pii_presidio_eval.yaml) to A/B against the model-based run.
-PII_DETECTOR_FACTORIES: Dict[str, Callable[[Optional[CompletionClient]], PIIDetector]] = {
-    "regex": lambda _pii_client: RegexPIIDetector(),
-    "model": lambda pii_client: ModelPIIDetector(PIIAgent(pii_client)),
+PII_DETECTOR_FACTORIES: Dict[str, Callable[[], PIIDetector]] = {
     "presidio": _build_presidio_detector,
 }
 
 
-def build_pii_detector(
-    names: List[str], pii_client: Optional[CompletionClient] = None
-) -> CompositePIIDetector:
+def build_pii_detector(names: List[str]) -> CompositePIIDetector:
     """Compose a CompositePIIDetector from configs/pii_policy.yaml detector names."""
     try:
-        detectors = [PII_DETECTOR_FACTORIES[name](pii_client) for name in names]
+        detectors = [PII_DETECTOR_FACTORIES[name]() for name in names]
     except KeyError as exc:
         known = ", ".join(sorted(PII_DETECTOR_FACTORIES))
         raise KeyError(f"Unknown PII detector '{exc.args[0]}'. Known: {known}") from None
     return CompositePIIDetector(*detectors)
+
+
+def pii_run_model_config(engine_name: str) -> RunModelConfig:
+    """RunModelConfig for the PII role, given an already-run result's engine
+    name (e.g. IngestionResult.pii_engine/PipelineResult.pii_engine).
+
+    No LLM client or configs/llm.yaml key applies to PII redaction (see
+    PIIDetector.engine_name) — `name` is just "presidio", `engine` is
+    whatever the detector actually reported, and `temperature` is fixed at
+    0.0 since nothing here is sampled. Callers derive `engine_name` from a
+    result object rather than reading `detector.engine_name` directly, so
+    this still works when the pipeline that produced the result isn't the
+    exact object that built the detector (e.g. a test double standing in
+    for IngestionPipeline/ExtractionPipeline)."""
+    return RunModelConfig(name="presidio", engine=engine_name, temperature=0.0)

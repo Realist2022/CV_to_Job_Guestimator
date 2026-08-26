@@ -4,7 +4,7 @@ from .experience import (
     OverallExperienceOutput,
     WorkRole,
 )
-from .pii import PIIKind, PIIOutput, PIISpanModel, TextSpan
+from .pii import PIIKind, TextSpan
 from .pipeline import PipelineMetrics, PipelineResult, TraceSpan
 from .requirements import (
     JobRequirement,
@@ -23,8 +23,6 @@ __all__ = [
     "SkillEvaluationDecision",
     "SkillEvaluationOutput",
     "SkillMatchResult",
-    "PIISpanModel",
-    "PIIOutput",
     "PIIKind",
     "TextSpan",
     "OverallExperienceOutput",

@@ -16,20 +16,12 @@ from src.config import load_pii_detector_names
 from src.schemas.ingestion import IngestionResult, RedactedCV
 from src.schemas.pipeline import TraceSpan, uuid7
 from src.services.document_parser import CandidateCV
-from src.services.llm_client import CompletionClient
 from src.services.pii_detector import PIIDetector, build_pii_detector
 
 
 class IngestionPipeline:
-    def __init__(
-        self,
-        pii_detector: Optional[PIIDetector] = None,
-        pii_client: Optional[CompletionClient] = None,
-    ):
-        self.pii_client = pii_client or _default_pii_client()
-        self.pii_detector = pii_detector or build_pii_detector(
-            load_pii_detector_names(), self.pii_client
-        )
+    def __init__(self, pii_detector: Optional[PIIDetector] = None):
+        self.pii_detector = pii_detector or build_pii_detector(load_pii_detector_names())
 
     def run(self, cv: CandidateCV, *, verbose: bool = True) -> IngestionResult:
         started = time.time()
@@ -47,7 +39,9 @@ class IngestionPipeline:
                 step="pii_redaction",
                 started_at=started_at,
                 duration_seconds=round(time.time() - step_started, 3),
-                attempts=self.pii_client.last_attempts,
+                # No LLM call in the PII path (see pii_detector.py) — there's
+                # nothing to retry, so no attempts count applies here.
+                attempts=None,
             )
         ]
         say(f"       {len(spans)} PII spans redacted from CV.")
@@ -56,23 +50,16 @@ class IngestionPipeline:
             raw_text=cv.text,
             redacted_text=redacted.text,
             pii_spans=spans,
-            pii_engine=self.pii_client.model,
+            pii_engine=self.pii_detector.engine_name,
             ingestion_trace_id=trace_id,
         )
 
         return IngestionResult(
             trace_id=trace_id,
             cv_id=redacted_cv.cv_id,
-            pii_engine=self.pii_client.model,
+            pii_engine=self.pii_detector.engine_name,
             execution_seconds=round(time.time() - started, 2),
             pii_spans=spans,
             trace=trace,
             redacted_cv=redacted_cv,
         )
-
-
-def _default_pii_client() -> CompletionClient:
-    # Imported lazily to avoid a circular import through src.services.
-    from src.model.adapters import client_for_role
-
-    return client_for_role("pii")

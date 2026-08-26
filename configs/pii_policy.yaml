@@ -1,12 +1,12 @@
-# PII detection policy: which detectors compose the CompositePIIDetector,
-# in order. Registered names live in src/harness/runner.py.
+# PII detection policy: which detector(s) compose the CompositePIIDetector.
+# "presidio" (spaCy NER, plus its own registry of custom PatternRecognizers
+# — marital_or_family, nationality, and the NZ-specific IRD number/driver's
+# licence/postcode-line formats) is the only detector: fully local, no LLM
+# call anywhere in the PII path. See presidio_detector.py's module
+# docstring for the per-kind coverage breakdown.
 detectors:
-  - regex
-  - model
+  - presidio
 
-# "presidio" (a local NER+regex detector, no LLM) is also registered and
-# can be swapped in here, or per-task via a task's `pii_detectors:` field
-# (see tasks/pii_presidio_eval.yaml) without touching this file. Tuning
-# for it, applied only when "presidio" is enabled:
+# Tuning for "presidio":
 presidio:
   score_threshold: 0.4

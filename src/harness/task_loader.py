@@ -11,19 +11,17 @@ PipelineKind = Literal["extraction", "ingestion", "matching"]
 
 
 class ModelSelection(BaseModel):
-    """Named model configs (keys in configs/llm.yaml) for each role.
+    """Named model config (a key in configs/llm.yaml) for the evaluation role.
 
-    Both are optional because not every pipeline needs both roles: an
-    "ingestion" task never calls an evaluation model, and a "matching" task
-    (consuming an already-redacted CV via redacted_cv_id) never calls a PII
-    model. A "extraction" task (the one-shot compatibility pipeline) still
-    needs both, same as before.
+    Optional because not every pipeline needs it: an "ingestion" task never
+    calls an evaluation model. There is no "pii" role at all — PII
+    redaction runs entirely through presidio (see pii_detector.py), with no
+    LLM in the loop and so nothing to select a model config for.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     evaluation: str | None = None
-    pii: str | None = None
 
 
 class TaskInputs(BaseModel):

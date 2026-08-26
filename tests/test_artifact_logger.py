@@ -51,12 +51,12 @@ class ArtifactLoggerTest(unittest.TestCase):
             task_path="tasks/cv_job_match.yaml",
             pipeline="extraction",
             scoring_weights={"skills_match": 0.6, "work_experience": 0.4},
-            pii_detectors=["regex", "model"],
+            pii_detectors=["presidio"],
             evaluation_model=RunModelConfig(
                 name="gemini-flash", engine="gemini-3.1-flash-lite", temperature=0.0
             ),
             pii_model=RunModelConfig(
-                name="local-llama", engine="llama3.2:latest", temperature=0.0
+                name="presidio", engine="presidio:en_core_web_sm", temperature=0.0
             ),
         )
 
