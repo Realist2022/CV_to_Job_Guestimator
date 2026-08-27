@@ -55,6 +55,19 @@ class RelevanceScoringEngine:
         relevant_roles = [
             role for role in overall_experience.candidate_roles if role.is_relevant
         ]
+
+        # A model that repeats a role would otherwise have its years counted twice.
+        seen: set = set()
+        deduped_roles = []
+        for role in relevant_roles:
+            key = (role.role_title, role.start_date, role.end_date)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_roles.append(role)
+        relevant_roles = deduped_roles
+
+
         total_career_years = sum(
             self.calculate_duration_in_years(role.start_date, role.end_date)
             for role in relevant_roles

@@ -7,7 +7,7 @@ from typing import Final
 # change.
 JOB_REQUIREMENTS_PROMPT_VERSION: Final = "1.3"
 SKILL_MATCHER_PROMPT_VERSION: Final = "1.2"
-OVERALL_EXPERIENCE_PROMPT_VERSION: Final = "1.2"
+OVERALL_EXPERIENCE_PROMPT_VERSION: Final = "1.4"
 
 # Convenience grouping for RunConfig.prompt_versions, matching which prompts
 # MatchingPipeline actually runs (see agents.py). PII redaction (presidio —
@@ -126,7 +126,23 @@ OVERALL_EXPERIENCE_SYSTEM_PROMPT: Final = """Extract and classify the candidate'
 - Extract ONLY paid employment or professional contractor work experience.
 - STRICTLY EXCLUDE educational degrees, academic courses, certifications, bootcamps, personal projects, and volunteer work.
 - Include role_title exactly as written.
-- Format start_date and end_date as YYYY-MM or "Present" when present in the CV.
+- Return each role once. Never repeat a role that has already been listed.
+- A position is identified by its employer and its date range, not by its wording.
+  When the CV describes the same job in more than one place (a heading, a "Role:"
+  line, a summary bullet), that is still one position and must produce one record.
+  Never emit two records covering the same employer over the same date range, even
+  when their role_title wording differs.
+- Where the CV gives both a short and a long form of one title (e.g. "Software
+  Engineer" in a heading and "Software Engineer / Full Stack Developer" in the body),
+  use the fuller form once. Do not emit a record per variant.
+- role_title is the job title held, not the employer's name. CVs commonly put the
+  employer on the heading line beside the dates and the title on the line below
+  (e.g. "ACME LOGISTICS - March 2020 - June 2022" then "Role: Warehouse Supervisor").
+  There, role_title is "Warehouse Supervisor"; "ACME LOGISTICS" is the employer and
+  must not become a record of its own.
+- Format start_date and end_date as YYYY-MM, converting the CV's wording into that
+  form rather than copying it verbatim ("July 2025" -> "2025-07", "Sept 2021" ->
+  "2021-09"), or "Present" when the CV shows the role as current.
 - Use null only if the CV is missing the start_date or end_date.
 - Do not infer missing dates, missing employers, roles not explicitly stated, or experience not supported by the text.
 

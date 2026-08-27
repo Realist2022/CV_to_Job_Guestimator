@@ -1,0 +1,24 @@
+name: model_eval_v1_fixed
+description: >
+  A/B control for model_eval: same Aug 24 weights as cv-guestimator:latest, but
+  served from the corrected Modelfile (explicit stop tokens, Ollama Go template,
+  no baked SYSTEM). Run alongside model_eval and model_eval_v2 to separate the
+  effect of the new weights from the effect of the serving config. Delete once
+  the comparison is settled.
+pipeline: extraction
+
+models:
+  evaluation: cv-guestimator-v1-fixed
+
+inputs:
+  job_listing:
+    - dataSet/tradeMeJobListing/Job_listing.txt
+    - dataSet/tradeMeJobListing/Job_listing.pdf
+  candidate_cv:
+    - dataSet/tradeMeCV/Sonny H Tapara CV.txt
+    - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
+
+evaluation:
+  min_final_relevance: 30
+  min_skills_match: 30
+  max_execution_seconds: 600
