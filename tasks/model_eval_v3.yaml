@@ -1,0 +1,22 @@
+name: model_eval_v3
+description: >
+  Same benchmark as model_eval, pinned to the newer cv-guestimator:v3 build so
+  the two can be run back to back and their artifacts compared. Delete this
+  task once v2 is promoted (or discarded) and model_eval points at the winner.
+pipeline: extraction
+
+models:
+  evaluation: cv-guestimator-v3
+
+inputs:
+  job_listing:
+    - dataSet/tradeMeJobListing/Job_listing.txt
+    - dataSet/tradeMeJobListing/Job_listing.pdf
+  candidate_cv:
+    - dataSet/tradeMeCV/Sonny H Tapara CV.txt
+    - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
+
+evaluation:
+  min_final_relevance: 30
+  min_skills_match: 30
+  max_execution_seconds: 600

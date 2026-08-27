@@ -23,3 +23,34 @@ models:
     base_url: http://localhost:11434/v1
     api_key: ollama
     temperature: 0.0
+
+  # A/B control: the SAME weights as cv-guestimator:latest above, rebuilt from
+  # the corrected docker/ollama/Modelfile. Isolates "new weights" from "changed
+  # serving config" -- compare against :latest to size the serving effect, and
+  # against v2 to size the weights effect. Delete once the A/B is settled.
+  cv-guestimator-v1-fixed:
+    provider: ollama
+    model: cv-guestimator:v1-fixed
+    base_url: http://localhost:11434/v1
+    api_key: ollama
+    temperature: 0.0
+
+  # Newer FT_MODEL2 export, kept as a separate tag so tasks/model_eval.yaml can
+  # A/B it against the :latest build above. Promote to :latest (or retag) once
+  # v2 is confirmed better; until then both entries must stay.
+  cv-guestimator-v2:
+    provider: ollama
+    model: cv-guestimator:v2
+    base_url: http://localhost:11434/v1
+    api_key: ollama
+    temperature: 0.0
+
+  # Latest FT_MODEL2 export (trained on data/processed/train.jsonl rebuilt
+  # 2026-08-27). Kept beside v2 so the three builds stay comparable; collapse
+  # these back to a single cv-guestimator entry once a winner is promoted.
+  cv-guestimator-v3:
+    provider: ollama
+    model: cv-guestimator:v3
+    base_url: http://localhost:11434/v1
+    api_key: ollama
+    temperature: 0.0

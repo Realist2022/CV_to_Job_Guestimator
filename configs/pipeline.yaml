@@ -2,7 +2,7 @@
 default: extraction
 verbose: true
 models:
-  evaluation: cv-guestimator
+  evaluation: cv-guestimator-v2
 
 # Optional per-role fallback: if the role's primary model (above) fails —
 # the backend is unreachable, or Instructor can't get valid structured

@@ -1,0 +1,24 @@
+name: cv_job_match_v3
+description: >
+  Same as cv_job_match, pinned to the cv-guestimator:v3 build. Temporary --
+  delete once v2 is promoted or discarded and cv_job_match points at the winner.
+pipeline: extraction
+
+models:
+  evaluation: cv-guestimator-v3
+
+inputs:
+  job_listing:
+    - dataSet/tradeMeJobListing/Job_listing.txt
+    - dataSet/tradeMeJobListing/Job_listing.pdf
+  candidate_cv:
+    - dataSet/tradeMeCV/Sonny H Tapara CV.txt
+    - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
+
+# Omit to use configs/scoring.yaml defaults.
+# scoring_weights:
+#   skills_match: 0.70
+#   work_experience: 0.30
+
+evaluation:
+  min_final_relevance: 0
