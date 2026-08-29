@@ -30,6 +30,25 @@ class RunModelConfig(BaseModel):
         ),
     )
 
+    @classmethod
+    def from_client(cls, client, *, name: str, fallback_used: bool = False) -> "RunModelConfig":
+        """Build from the client that actually served a run's completions.
+
+        `client` is typically an InstructorClient or FallbackInstructorClient
+        (see src/services/llm_client.py) — anything duck-typing `.model` and
+        `.temperature`. Centralizes the `engine`/`temperature` extraction that
+        every caller (CLI harness, web API) otherwise repeated identically;
+        `fallback_used` stays a plain kwarg since detecting it is caller-
+        specific (e.g. routes.py's `_fallback_used`, which only a
+        FallbackInstructorClient can report).
+        """
+        return cls(
+            name=name,
+            engine=client.model,
+            temperature=client.temperature,
+            fallback_used=fallback_used,
+        )
+
 
 class RunConfig(BaseModel):
     """Snapshot of the config that produced a run, for later reproducibility.

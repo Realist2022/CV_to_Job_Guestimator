@@ -82,10 +82,9 @@ async def compare_documents(
             pipeline="extraction",
             scoring_weights=scoring_engine.weights,
             pii_detectors=load_pii_detector_names(),
-            evaluation_model=RunModelConfig(
+            evaluation_model=RunModelConfig.from_client(
+                eval_client,
                 name=model_names["evaluation"],
-                engine=eval_client.model,
-                temperature=eval_client.temperature,
                 fallback_used=_fallback_used(eval_client),
             ),
             pii_model=pii_run_model_config(result.pii_engine),
@@ -177,10 +176,9 @@ async def match_cv(
             pipeline="matching",
             scoring_weights=scoring_engine.weights,
             pii_detectors=[],
-            evaluation_model=RunModelConfig(
+            evaluation_model=RunModelConfig.from_client(
+                eval_client,
                 name=load_pipeline_model_names()["evaluation"],
-                engine=eval_client.model,
-                temperature=eval_client.temperature,
                 fallback_used=_fallback_used(eval_client),
             ),
             # No PII detector runs for /api/match at all — the CV arrived

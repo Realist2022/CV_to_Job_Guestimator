@@ -149,11 +149,7 @@ class HarnessRunner:
             pipeline=task.pipeline,
             scoring_weights=scoring_weights,
             pii_detectors=pii_detector_names,
-            evaluation_model=RunModelConfig(
-                name=evaluation_model_name,
-                engine=eval_client.model,
-                temperature=eval_client.temperature,
-            ),
+            evaluation_model=RunModelConfig.from_client(eval_client, name=evaluation_model_name),
             pii_model=pii_run_model_config(result.pii_engine),
             prompt_versions=EXTRACTION_PROMPT_VERSIONS,
         )
@@ -231,11 +227,7 @@ class HarnessRunner:
             scoring_weights=scoring_weights,
             # No detector ran in this task; the CV arrived pre-redacted.
             pii_detectors=[],
-            evaluation_model=RunModelConfig(
-                name=evaluation_model_name,
-                engine=eval_client.model,
-                temperature=eval_client.temperature,
-            ),
+            evaluation_model=RunModelConfig.from_client(eval_client, name=evaluation_model_name),
             # No PII detector runs for a matching-only task at all — the CV
             # arrived pre-redacted — so this reports the engine that
             # actually produced that earlier redaction, off the RedactedCV
