@@ -2,8 +2,9 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from src.schemas.base import StrictBaseModel
 from src.schemas.evaluation import EvaluationReport
 from src.schemas.experience import OverallExperienceOutput
 from src.schemas.ingestion import IngestionResult
@@ -13,10 +14,8 @@ from src.schemas.requirements import SkillMatchResult
 from src.schemas.scoring import Scorecard
 
 
-class RunModelConfig(BaseModel):
+class RunModelConfig(StrictBaseModel):
     """The resolved model config actually used for one role in a run."""
-
-    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, description="Named config key from configs/llm.yaml.")
     engine: str = Field(min_length=1, description="Resolved model string sent to the provider.")
@@ -50,7 +49,7 @@ class RunModelConfig(BaseModel):
         )
 
 
-class RunConfig(BaseModel):
+class RunConfig(StrictBaseModel):
     """Snapshot of the config that produced a run, for later reproducibility.
 
     Metrics and scores are meaningless in isolation once the config that
@@ -58,8 +57,6 @@ class RunConfig(BaseModel):
     the result instead of leaving it to whatever configs/*.yaml happen to
     contain later.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     task_name: str | None = None
     task_path: str | None = None
@@ -80,9 +77,7 @@ class RunConfig(BaseModel):
     )
 
 
-class ArtifactMetadata(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class ArtifactMetadata(StrictBaseModel):
     run_number: int = Field(gt=0)
     trace_id: UUID = Field(default_factory=uuid7)
     engine: str = Field(min_length=1)
@@ -91,9 +86,7 @@ class ArtifactMetadata(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-class RunArtifact(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class RunArtifact(StrictBaseModel):
     schema_version: Literal["3.0", "3.1", "3.2", "3.3", "3.4"] = "3.4"
     metadata: ArtifactMetadata
     config: RunConfig | None = None
@@ -137,7 +130,7 @@ class RunArtifact(BaseModel):
         )
 
 
-class IngestionRunConfig(BaseModel):
+class IngestionRunConfig(StrictBaseModel):
     """Snapshot of the config that produced an ingestion-only run.
 
     Deliberately not RunConfig: an ingestion run has no evaluation model
@@ -147,8 +140,6 @@ class IngestionRunConfig(BaseModel):
     placeholder values here. Neither is honest, hence a separate schema.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     task_name: str | None = None
     task_path: str | None = None
     pii_detectors: list[str] = Field(default_factory=list)
@@ -156,9 +147,7 @@ class IngestionRunConfig(BaseModel):
     prompt_versions: dict[str, str] = Field(default_factory=dict)
 
 
-class IngestionArtifactMetadata(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class IngestionArtifactMetadata(StrictBaseModel):
     run_number: int = Field(gt=0)
     trace_id: UUID = Field(default_factory=uuid7)
     pii_engine: str = Field(min_length=1)
@@ -166,15 +155,13 @@ class IngestionArtifactMetadata(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-class IngestionArtifact(BaseModel):
+class IngestionArtifact(StrictBaseModel):
     """Logged run artifact for a standalone IngestionPipeline run.
 
     Distinct from RunArtifact for the same reason IngestionRunConfig is
     distinct from RunConfig: there's no skills/experience/scorecard to
     report, since matching never ran as part of this task.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["1.0", "1.1"] = "1.1"
     metadata: IngestionArtifactMetadata

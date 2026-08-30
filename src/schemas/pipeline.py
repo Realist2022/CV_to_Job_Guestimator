@@ -3,8 +3,9 @@ import time
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
+from src.schemas.base import StrictBaseModel
 from src.schemas.experience import OverallExperienceOutput
 from src.schemas.pii import TextSpan
 from src.schemas.requirements import SkillMatchResult
@@ -33,15 +34,13 @@ def uuid7() -> UUID:
     return UUID(int=value)
 
 
-class TraceSpan(BaseModel):
+class TraceSpan(StrictBaseModel):
     """One timed step inside a pipeline run.
 
     Spans give a per-step latency breakdown and something concrete to
     correlate against structured logs, instead of only the run's final
     aggregate duration.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     span_id: UUID = Field(default_factory=uuid4)
     step: str = Field(min_length=1)
@@ -55,9 +54,7 @@ class TraceSpan(BaseModel):
     )
 
 
-class PipelineMetrics(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class PipelineMetrics(StrictBaseModel):
     total_requirements: int = Field(ge=0)
     total_matched: int = Field(ge=0)
     match_percentage: float = Field(ge=0.0, le=100.0)
@@ -70,8 +67,8 @@ class PipelineMetrics(BaseModel):
         return self
 
 
-class PipelineResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+class PipelineResult(StrictBaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     trace_id: UUID = Field(default_factory=uuid7)
     engine: str = Field(min_length=1)

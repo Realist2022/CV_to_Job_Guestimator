@@ -3,14 +3,15 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from src.config import read_yaml
+from src.schemas.base import StrictBaseModel
 
 PipelineKind = Literal["extraction", "ingestion", "matching"]
 
 
-class ModelSelection(BaseModel):
+class ModelSelection(StrictBaseModel):
     """Named model config (a key in configs/llm.yaml) for the evaluation role.
 
     Optional because not every pipeline needs it: an "ingestion" task never
@@ -19,12 +20,10 @@ class ModelSelection(BaseModel):
     LLM in the loop and so nothing to select a model config for.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     evaluation: str | None = None
 
 
-class TaskInputs(BaseModel):
+class TaskInputs(StrictBaseModel):
     """Candidate paths per document; the first existing path wins.
 
     candidate_cv is the raw-CV path list, used by "extraction" and
@@ -33,25 +32,19 @@ class TaskInputs(BaseModel):
     path, matching MatchingPipeline's own signature.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     job_listing: list[str] = []
     candidate_cv: list[str] = []
     redacted_cv_id: str | None = None
 
 
-class EvaluationCriteria(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class EvaluationCriteria(StrictBaseModel):
     min_final_relevance: float | None = None
     min_skills_match: float | None = None
     min_pii_spans: int | None = None
     max_execution_seconds: float | None = None
 
 
-class TaskSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class TaskSpec(StrictBaseModel):
     name: str
     description: str = ""
     pipeline: PipelineKind = "extraction"
