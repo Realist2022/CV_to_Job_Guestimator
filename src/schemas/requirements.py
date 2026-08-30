@@ -1,9 +1,9 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from src.schemas.base import StrictBaseModel
 
 
-class JobRequirement(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class JobRequirement(StrictBaseModel):
     skill_name: str = Field(
         min_length=1,
         description="One atomic technical or operational skill_name.",

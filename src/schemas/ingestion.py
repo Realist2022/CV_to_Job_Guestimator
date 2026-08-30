@@ -11,15 +11,14 @@ import hashlib
 from datetime import datetime, timezone
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from src.schemas.base import StrictBaseModel
 from src.schemas.pii import TextSpan
 from src.schemas.pipeline import TraceSpan, uuid7
 
 
-class RedactedCV(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class RedactedCV(StrictBaseModel):
     cv_id: str = Field(
         min_length=1,
         description="sha256 of the normalised raw CV text. Content-addressed "
@@ -59,9 +58,7 @@ class RedactedCV(BaseModel):
         return cls(**kwargs)
 
 
-class IngestionResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class IngestionResult(StrictBaseModel):
     trace_id: UUID = Field(default_factory=uuid7)
     cv_id: str = Field(min_length=1)
     pii_engine: str = Field(min_length=1)
