@@ -5,13 +5,16 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from src.api.schemas import CompareResponse, IngestResponse, MatchResponse
 from src.config import (
+    load_default_evaluation_criteria,
     load_pii_detector_names,
     load_pipeline_model_names,
     load_scoring_weights,
 )
+from src.harness.evaluator import ThresholdEvaluator, resolve_criteria
 from src.model.adapters import client_for_role
 from src.prompts.templates import EXTRACTION_PROMPT_VERSIONS, MATCHING_PROMPT_VERSIONS
 from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
+from src.schemas.evaluation import EvaluationReport
 from src.services import (
     CandidateCV,
     CVIngestionStore,
@@ -38,6 +41,24 @@ def _fallback_used(client: object) -> bool:
     rather than its configured primary (always False for a plain
     InstructorClient with no fallback configured)."""
     return isinstance(client, FallbackInstructorClient) and client.fallback_used
+
+
+def _api_evaluation(result) -> EvaluationReport | None:
+    """Judge an API run against configs/pipeline.yaml's `default_evaluation`.
+
+    The same baseline a harness task inherits (see resolve_criteria), so an
+    /api/compare and an equivalent `uv run main.py` are held to one bar.
+    There's no task to layer on top here -- an API request has no task file,
+    which is the whole reason these artifacts used to log a null evaluation.
+
+    Stays None when nothing is configured, so the artifact keeps saying
+    "evaluation": null rather than carrying an empty report that claims a
+    verdict nobody asked for.
+    """
+    criteria = resolve_criteria(result, defaults=load_default_evaluation_criteria())
+    if not criteria.model_fields_set:
+        return None
+    return ThresholdEvaluator(criteria).evaluate(result)
 
 
 @router.post("/api/compare", response_model=CompareResponse)
@@ -72,13 +93,24 @@ async def compare_documents(
             on_ingested=lambda ingestion_result: persist_ingestion(
                 ingestion_result,
                 IngestionRunConfig(
+                    # A web-API run has no task file behind it, so task_path
+                    # stays None -- fabricating one would be a lie (same
+                    # reasoning as IngestionRunConfig's own docstring). The
+                    # "api:" prefix marks this as an endpoint rather than a
+                    # tasks/*.yaml name, so the run's origin is still on
+                    # record instead of reading as an anonymous null.
+                    task_name="api:compare",
                     pii_detectors=load_pii_detector_names(),
                     pii_model=pii_run_model_config(ingestion_result.pii_engine),
                     prompt_versions={},
                 ),
+                # Judged the same way /api/ingest judges its own artifact --
+                # this one is a side effect of /api/compare, not a lesser run.
+                evaluation=_api_evaluation(ingestion_result),
             ),
         )
         run_config = RunConfig(
+            task_name="api:compare",
             pipeline="extraction",
             scoring_weights=scoring_engine.weights,
             pii_detectors=load_pii_detector_names(),
@@ -90,8 +122,9 @@ async def compare_documents(
             pii_model=pii_run_model_config(result.pii_engine),
             prompt_versions=EXTRACTION_PROMPT_VERSIONS,
         )
+        evaluation = _api_evaluation(result)
         artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
-            result, config=run_config
+            result, evaluation=evaluation, config=run_config
         )
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -103,6 +136,7 @@ async def compare_documents(
 
     return CompareResponse(
         artifact_path=artifact_path,
+        evaluation=evaluation,
         engine=result.engine,
         pii_engine=result.pii_engine,
         execution_seconds=result.execution_seconds,
@@ -129,11 +163,13 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
         result = pipeline.run(cv, verbose=False)
 
         config = IngestionRunConfig(
+            task_name="api:ingest",
             pii_detectors=load_pii_detector_names(),
             pii_model=pii_run_model_config(result.pii_engine),
             prompt_versions={},
         )
-        artifact_path, _ = persist_ingestion(result, config)
+        evaluation = _api_evaluation(result)
+        artifact_path, _ = persist_ingestion(result, config, evaluation=evaluation)
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -145,6 +181,7 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
     return IngestResponse(
         cv_id=result.cv_id,
         artifact_path=artifact_path,
+        evaluation=evaluation,
         pii_engine=result.pii_engine,
         execution_seconds=result.execution_seconds,
         pii_span_count=len(result.pii_spans),
@@ -173,6 +210,7 @@ async def match_cv(
         result = pipeline.run(listing, redacted_cv, verbose=False)
 
         run_config = RunConfig(
+            task_name="api:match",
             pipeline="matching",
             scoring_weights=scoring_engine.weights,
             pii_detectors=[],
@@ -183,12 +221,14 @@ async def match_cv(
             ),
             # No PII detector runs for /api/match at all — the CV arrived
             # pre-redacted from a prior /api/ingest call — so this reports
-            # the engine that actually produced that earlier redaction.
-            pii_model=pii_run_model_config(redacted_cv.pii_engine),
+            # the engine that actually produced that earlier redaction,
+            # flagged ran_this_run=False to say exactly that.
+            pii_model=pii_run_model_config(redacted_cv.pii_engine, ran_this_run=False),
             prompt_versions=MATCHING_PROMPT_VERSIONS,
         )
+        evaluation = _api_evaluation(result)
         artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
-            result, config=run_config
+            result, evaluation=evaluation, config=run_config
         )
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -200,6 +240,7 @@ async def match_cv(
 
     return MatchResponse(
         artifact_path=artifact_path,
+        evaluation=evaluation,
         engine=result.engine,
         execution_seconds=result.execution_seconds,
         metrics=result.metrics,

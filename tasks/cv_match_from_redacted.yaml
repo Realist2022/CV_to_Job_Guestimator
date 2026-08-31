@@ -13,7 +13,7 @@ models:
   # No models.pii field exists at all — PII redaction runs entirely
   # through presidio, with no LLM in the loop for any task. This task's CV
   # arrived pre-redacted from a prior "ingestion" run anyway (see above).
-  evaluation: local-llama
+  evaluation: cv-guestimator
 
 inputs:
   job_listing:
@@ -21,5 +21,8 @@ inputs:
     - dataSet/tradeMeJobListing/Job_listing.pdf
   redacted_cv_id: "653ceb85b54215c079ef300a90e657a703c63832f727c9125957374ccccf6c69"
 
-evaluation:
-  min_final_relevance: 0
+# No task-level thresholds: this everyday comparison inherits
+# configs/pipeline.yaml's default_evaluation (the health checks) and nothing
+# more. It carried `min_final_relevance: 0` before, which passed on any score
+# at all -- a check that cannot fail reports PASS without meaning it. Score
+# gates live on the benchmark task, tasks/model_eval.yaml.

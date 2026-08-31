@@ -17,6 +17,10 @@ inputs:
     - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
 
 evaluation:
-  # Only PII-shaped criteria apply here — there's no scorecard/skills
-  # result to check min_final_relevance/min_skills_match against.
+  # The only score-shaped criterion this pipeline can answer: there's no
+  # scorecard or skills result here for min_final_relevance/min_skills_match
+  # to read. Adding either would fail loudly rather than being ignored --
+  # only *inherited* defaults get dropped for an unsupported result shape,
+  # never a threshold written by hand. This run is also judged by
+  # configs/pipeline.yaml's default_evaluation on top of this.
   min_pii_spans: 1

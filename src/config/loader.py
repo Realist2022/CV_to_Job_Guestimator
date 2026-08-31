@@ -73,6 +73,28 @@ def load_pipeline_fallback_names() -> dict[str, str]:
     return dict(fallback_models)
 
 
+def load_default_evaluation_criteria() -> dict:
+    """Optional `default_evaluation` mapping from configs/pipeline.yaml.
+
+    The baseline thresholds every run is judged against, whichever entry
+    point produced it. A harness task layers its own `evaluation:` block on
+    top per key (see resolve_criteria in src/harness/evaluator.py); the web
+    API has no task file and uses these alone, which is what stopped /api/*
+    artifacts from logging `"evaluation": null`.
+
+    An absent or empty mapping means no baseline: tasks are judged purely by
+    their own criteria and API runs go back to logging a null evaluation.
+
+    Returned as a plain dict rather than an EvaluationCriteria so this module
+    stays independent of src.harness (the harness imports config, not the
+    other way round); the evaluator validates it.
+    """
+    criteria = load_yaml("pipeline.yaml").get("default_evaluation") or {}
+    if not isinstance(criteria, dict):
+        raise ValueError("configs/pipeline.yaml 'default_evaluation' key must be a mapping.")
+    return dict(criteria)
+
+
 def load_pii_detector_names() -> list[str]:
     detectors = load_yaml("pii_policy.yaml").get("detectors")
     if not isinstance(detectors, list) or not detectors:

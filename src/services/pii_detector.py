@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime
 from typing import Callable, Dict, Final, List, Optional
 
-from src.schemas.artifact import RunModelConfig
+from src.schemas.artifact import PIIRunConfig
 from src.schemas.pii import TextSpan
 from src.services.document_parser import CandidateCV, normalise
 
@@ -187,16 +187,22 @@ def build_pii_detector(names: List[str]) -> CompositePIIDetector:
     return CompositePIIDetector(*detectors)
 
 
-def pii_run_model_config(engine_name: str) -> RunModelConfig:
-    """RunModelConfig for the PII role, given an already-run result's engine
+def pii_run_model_config(engine_name: str, *, ran_this_run: bool = True) -> PIIRunConfig:
+    """PIIRunConfig for the PII role, given an already-run result's engine
     name (e.g. IngestionResult.pii_engine/PipelineResult.pii_engine).
 
     No LLM client or configs/llm.yaml key applies to PII redaction (see
-    PIIDetector.engine_name) — `name` is just "presidio", `engine` is
-    whatever the detector actually reported, and `temperature` is fixed at
-    0.0 since nothing here is sampled. Callers derive `engine_name` from a
-    result object rather than reading `detector.engine_name` directly, so
-    this still works when the pipeline that produced the result isn't the
-    exact object that built the detector (e.g. a test double standing in
-    for IngestionPipeline/ExtractionPipeline)."""
-    return RunModelConfig(name="presidio", engine=engine_name, temperature=0.0)
+    PIIDetector.engine_name) — `name` is just "presidio" and `engine` is
+    whatever the detector actually reported. Callers derive `engine_name`
+    from a result object rather than reading `detector.engine_name`
+    directly, so this still works when the pipeline that produced the
+    result isn't the exact object that built the detector (e.g. a test
+    double standing in for IngestionPipeline/ExtractionPipeline).
+
+    Pass ran_this_run=False on a "matching" run, where no detector executed
+    and `engine_name` comes off a RedactedCV redacted by some earlier run.
+    The default is True because that is the common case (extraction and
+    ingestion both redact), and because a caller that forgets it on a
+    matching run overstates what happened rather than understating it —
+    so keep it explicit at those two call sites."""
+    return PIIRunConfig(name="presidio", engine=engine_name, ran_this_run=ran_this_run)

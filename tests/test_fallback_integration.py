@@ -12,8 +12,8 @@ agents, via a real MatchingPipeline) call it. This file closes that gap.
 
 import unittest
 
-from openai import APIConnectionError
 from httpx import Request
+from openai import APIConnectionError
 
 from src.api.routes import _fallback_used
 from src.schemas.experience import OverallExperienceOutput

@@ -1,10 +1,11 @@
 name: model_eval_v1_fixed
 description: >
-  A/B control for model_eval: same Aug 24 weights as cv-guestimator:latest, but
-  served from the corrected Modelfile (explicit stop tokens, Ollama Go template,
-  no baked SYSTEM). Run alongside model_eval and model_eval_v2 to separate the
-  effect of the new weights from the effect of the serving config. Delete once
-  the comparison is settled.
+  Rollback benchmark. Same thresholds and documents as model_eval, but pinned
+  to the Aug 24 2026 weights that cv-guestimator:v2 was promoted over. Kept
+  after the promotion so a suspected v2 regression can be measured against the
+  previous build: run this and model_eval back to back (so both see the same
+  GPU thermal state) and diff with scripts/compare_runs.py. Delete once v2 has
+  been trusted long enough that a rollback is no longer plausible.
 pipeline: extraction
 
 models:
@@ -18,7 +19,12 @@ inputs:
     - dataSet/tradeMeCV/Sonny H Tapara CV.txt
     - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
 
+# Thresholds deliberately identical to model_eval.yaml -- the two are only
+# comparable if they're judged by the same bar.
 evaluation:
+  # Score gates, on top of configs/pipeline.yaml's default_evaluation --
+  # max_execution_seconds and max_attempts are inherited from there, so the
+  # bar this benchmark applies stays the same one every other run is held to
+  # plus these two. Setting either to `null` here would opt out.
   min_final_relevance: 30
   min_skills_match: 30
-  max_execution_seconds: 600

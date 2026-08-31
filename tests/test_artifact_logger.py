@@ -4,7 +4,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from src.schemas.artifact import RunArtifact, RunConfig, RunModelConfig
+from src.schemas.artifact import PIIRunConfig, RunArtifact, RunConfig, RunModelConfig
 from src.schemas.evaluation import CheckResult, EvaluationReport
 from src.utils import ArtifactLogger
 from tests.factories import build_pipeline_result
@@ -31,7 +31,7 @@ class ArtifactLoggerTest(unittest.TestCase):
             payload = json.loads(serialized)
             artifact = RunArtifact.model_validate_json(serialized)
 
-            self.assertEqual(payload["schema_version"], "3.4")
+            self.assertEqual(payload["schema_version"], "3.5")
             self.assertEqual(artifact.metadata.run_number, 1)
             self.assertEqual(artifact.metadata.engine, "example/model:latest")
             self.assertEqual(artifact.metadata.pii_engine, "local-pii:latest")
@@ -55,8 +55,8 @@ class ArtifactLoggerTest(unittest.TestCase):
             evaluation_model=RunModelConfig(
                 name="gemini-flash", engine="gemini-3.1-flash-lite", temperature=0.0
             ),
-            pii_model=RunModelConfig(
-                name="presidio", engine="presidio:en_core_web_sm", temperature=0.0
+            pii_model=PIIRunConfig(
+                name="presidio", engine="presidio:en_core_web_sm", ran_this_run=True
             ),
         )
 
