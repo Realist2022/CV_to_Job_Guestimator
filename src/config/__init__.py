@@ -1,5 +1,6 @@
 from .loader import (
     CONFIG_DIR,
+    load_default_evaluation_criteria,
     load_model_config,
     load_pii_detector_names,
     load_pipeline_fallback_names,
@@ -13,6 +14,7 @@ from .loader import (
 __all__ = [
     "CONFIG_DIR",
     "load_model_config",
+    "load_default_evaluation_criteria",
     "load_pii_detector_names",
     "load_pipeline_fallback_names",
     "load_pipeline_model_names",

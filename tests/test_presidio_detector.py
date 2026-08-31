@@ -20,14 +20,16 @@ instead.
 
 import unittest
 
+from src.schemas.pii import TextSpan
 from src.services.document_parser import CandidateCV
-from src.services.pii_detector import PII_DETECTOR_FACTORIES, build_pii_detector
+from src.services.pii_base import PII_DETECTOR_FACTORIES, build_pii_detector
 from src.services.presidio_detector import (
     PresidioPIIDetector,
     _content_section_start,
     _looks_like_person_name,
     _looks_like_personal_link,
     _looks_like_street_address,
+    _person_name_fragment,
 )
 
 
@@ -229,7 +231,7 @@ class PresidioDetectorTest(unittest.TestCase):
         self.assertEqual(detector.score_threshold, 0.9)
 
     def test_nz_ird_number_and_drivers_licence_detected_natively(self):
-        # Ported from RegexPIIDetector.PATTERNS (pii_detector.py) so
+        # Ported from RegexPIIDetector.PATTERNS (pii_base.py) so
         # "presidio" alone covers every PIIKind without needing "regex"
         # composed alongside it — see the module docstring's coverage
         # notes, now closed for these two.
@@ -241,6 +243,71 @@ class PresidioDetectorTest(unittest.TestCase):
 
         self.assertEqual(kinds_by_text.get("123-456-789"), "other_identifier")
         self.assertEqual(kinds_by_text.get("AB123456"), "other_identifier")
+
+    def test_person_name_fragment_trims_glued_spans_without_widening_recall(self):
+        # A clean span passes through untouched.
+        self.assertEqual(_person_name_fragment("Sonny Tapara"), "Sonny Tapara")
+        self.assertEqual(_person_name_fragment("O'Connor-Smith"), "O'Connor-Smith")
+        # A glued span is trimmed back to the name, not thrown away.
+        self.assertEqual(_person_name_fragment("Taylor Developer\nName"), "Taylor Developer")
+        self.assertEqual(
+            _person_name_fragment("Taylor Developer\nLocation: Auckland"), "Taylor Developer"
+        )
+        # What the guard exists to stop still stops: nothing precedes the
+        # first bullet, and a label glued on before the newline is not
+        # name-shaped.
+        self.assertIsNone(_person_name_fragment("• Git / GitHub\n• CI"))
+        self.assertIsNone(_person_name_fragment("• Skill"))
+        self.assertIsNone(_person_name_fragment("Name: Taylor\nLocation"))
+
+    def test_content_section_start_matches_qualified_experience_headings(self):
+        # Regression: "Work Experience:" is the commonest spelling of this
+        # heading and matched none of the alternatives, so content_start
+        # was None and the header/body guard never ran at all.
+        for heading in ("Work Experience:", "Professional Experience", "Relevant Skills"):
+            text = f"Jane Doe\n\n{heading}\nLead Engineer at Acme\n"
+            self.assertIsNotNone(_content_section_start(text), heading)
+        # Still matched with no qualifier in front.
+        self.assertIsNotNone(_content_section_start("Jane Doe\n\nEmployment History\nAcme\n"))
+        # A qualifier alone is not a body heading.
+        self.assertIsNone(_content_section_start("Jane Doe\nProfessional Summary: Versatile\n"))
+
+    def test_header_name_recovered_and_body_false_positive_not_redacted(self):
+        # Regression for run-000232: on this CV the only pii_span produced
+        # was person_name "Java" (from the Work Experience bullets), while
+        # the candidate's actual name went out in the clear. Three separate
+        # causes, all exercised here — spaCy glued the following line onto
+        # both "Taylor Developer" PERSON hits so both were dropped whole;
+        # "Work Experience:" did not match CONTENT_SECTION_HEADING so the
+        # body guard never armed; and redaction was a bare substring
+        # replace, so "Java" rewrote "JavaScript" to "[PERSON_NAME]Script".
+        cv = CandidateCV(
+            "Taylor Developer\n"
+            "Name: Taylor Developer\n"
+            "Location: Auckland, New Zealand\n"
+            "Role: Senior Full Stack Engineer\n"
+            "Work Experience:\n"
+            "Lead Software Engineer | CloudTech Solutions > Jan 2020 - Present\n"
+            "• Led the migration of our legacy frontend from vanilla JavaScript to TypeScript.\n"
+            "• Maintained a legacy Java codebase for an internal CRM tool.\n"
+        )
+        detector = PresidioPIIDetector()
+
+        spans = detector.detect(cv)
+        person_texts = [s.text for s in spans if s.kind == "person_name"]
+        redacted = cv.redacted(spans).text
+
+        self.assertEqual(person_texts, ["Taylor Developer"])
+        self.assertNotIn("Taylor Developer", redacted)
+        self.assertIn("JavaScript", redacted)
+
+    def test_redaction_does_not_match_inside_a_longer_word(self):
+        cv = CandidateCV("Java Smith\nWorked in JavaScript and Java.\n")
+
+        redacted = cv.redacted([TextSpan("person_name", "Java")]).text
+
+        self.assertIn("JavaScript", redacted)
+        self.assertEqual(redacted.count("[PERSON_NAME]"), 2)
 
 
 if __name__ == "__main__":

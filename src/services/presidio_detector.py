@@ -1,14 +1,15 @@
 """Presidio + spaCy NER PII detector — the only PII detector this project
 has: fully local, in-process, no LLM/Ollama roundtrip, no network call,
 deterministic given the same spaCy model. Registered as the "presidio" name
-in PII_DETECTOR_FACTORIES (see pii_detector.py).
+in PII_DETECTOR_FACTORIES (see pii_base.py).
 
 Per-PIIKind coverage:
   - person_name, other_identifier (email/phone/url): spaCy PERSON NER and
     Presidio's built-in pattern recognizers cover these well. Two shape
-    guards (_looks_like_person_name, _content_section_start) reject PERSON
+    guards (_person_name_fragment, _content_section_start) handle PERSON
     hits that are either malformed (glued across a bullet/newline by
-    spaCy's NER on fragmented CV text) or sit outside the header/contact
+    spaCy's NER on fragmented CV text — trimmed back to the name when one
+    survives the trim, dropped otherwise) or sit outside the header/contact
     block (a candidate's own name is written once, at the very top, before
     any Education/Experience/Skills heading — see CONTENT_SECTION_HEADING).
   - other_identifier (URL specifically): Presidio's "Non schema URL"
@@ -36,7 +37,7 @@ Per-PIIKind coverage:
     city name is not treated as a specific residential address.
 
 The heavy AnalyzerEngine/spaCy model load only happens once this module is
-actually imported (see the lazy import in pii_detector.py's
+actually imported (see the lazy import in pii_base.py's
 PII_DETECTOR_FACTORIES).
 """
 
@@ -45,7 +46,7 @@ from typing import Dict, Final, List, Optional
 
 from src.schemas.pii import TextSpan
 from src.services.document_parser import CandidateCV, normalise
-from src.services.pii_detector import (
+from src.services.pii_base import (
     CONTACT_OR_ID_PATTERN,
     PIIDetector,
     is_valid_pii_span,
@@ -61,7 +62,7 @@ from src.services.pii_detector import (
 # and would otherwise be rejected despite being a correct, well-typed hit.
 # NZ_IRD_NUMBER/NZ_DRIVERS_LICENCE are the same kind of precise, fully
 # deterministic regex match (ported from RegexPIIDetector's own patterns —
-# see pii_detector.py) rather than a NER guess, so they get the same
+# see pii_base.py) rather than a NER guess, so they get the same
 # treatment as EMAIL_ADDRESS/PHONE_NUMBER, not URL's extra context guard.
 PRE_VALIDATED_ENTITY_TYPES: Final = {
     "EMAIL_ADDRESS",
@@ -109,8 +110,16 @@ REFEREE_HEADING: Final = re.compile(r"^\s*(?:referees?|references?)\b.*$", re.I 
 # that en_core_web_sm's small NER model mistakes for a name on this kind of
 # fragmented, bullet-heavy text (see the module docstring). Anchored to
 # start-of-line so a sub-bullet like "Key Skills:" doesn't false-trigger.
+# The leading-qualifier group matters more than it looks: without it
+# "Work Experience:" — the single most common way a CV names that section —
+# did not match (the line starts with "Work ", and the alternation carried
+# only a bare "experience" and "work history"), so content_start stayed
+# None, this entire guard sat inert, and body-text PERSON false positives
+# went straight through unchecked. "employment history"/"technical skills"
+# still match with the group absent, via their own alternatives.
 CONTENT_SECTION_HEADING: Final = re.compile(
-    r"^\s*(?:education|experience|employment(?: history)?|work history|"
+    r"^\s*(?:(?:work|professional|employment|career|relevant|industry)\s+)?"
+    r"(?:education|experience|employment(?: history)?|work history|"
     r"skills?|technical skills|key projects|projects?|portfolio)\b.*$",
     re.I | re.M,
 )
@@ -201,9 +210,42 @@ def _looks_like_personal_link(text: str, start: int, span_text: str) -> bool:
 # scores the same as a clean one.
 PERSON_NAME_REJECT_PATTERN: Final = re.compile(r"[•\n/]")
 
+# Shape a *recovered* fragment must satisfy before we trust it (see
+# _person_name_fragment): 1-4 capitalised tokens of letters, apostrophes,
+# hyphens, and the full stops in initials. Deliberately applied only to a
+# fragment salvaged from a malformed span, never to an already-clean one —
+# a clean PERSON hit still passes on PERSON_NAME_REJECT_PATTERN alone, so
+# this can only add recall, never take it away from spans working today.
+PERSON_NAME_FRAGMENT_PATTERN: Final = re.compile(
+    r"[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,3}"
+)
+
 
 def _looks_like_person_name(text: str) -> bool:
     return not PERSON_NAME_REJECT_PATTERN.search(text)
+
+
+def _person_name_fragment(span_text: str) -> Optional[str]:
+    """The usable person name inside a PERSON span, or None to reject it.
+
+    A clean span comes back unchanged. A malformed one is trimmed back to
+    the text before its first bullet/newline/slash, and kept only if that
+    head is still name-shaped — instead of being discarded whole.
+
+    Discarding whole was a real recall hole, not a theoretical one: on a CV
+    whose header reads "Taylor Developer\\nName: Taylor Developer\\nLocation:
+    Auckland", spaCy glued the following line onto both PERSON hits
+    ("Taylor Developer\\nName" and "Taylor Developer\\nLocation: Auckland"),
+    so the only two hits carrying the candidate's actual name were both
+    rejected as not_name_shaped and the name went out unredacted. Trimming
+    recovers "Taylor Developer" from either. The spans this guard exists to
+    stop still stop: the head of "• Git / GitHub\\n• CI" or of
+    "• Led" is empty, and a glued label like "Name: Taylor" fails the
+    fragment shape on its colon."""
+    if _looks_like_person_name(span_text):
+        return span_text
+    head = PERSON_NAME_REJECT_PATTERN.split(span_text, maxsplit=1)[0].strip()
+    return head if head and PERSON_NAME_FRAGMENT_PATTERN.fullmatch(head) else None
 
 
 def _build_analyzer(model_name: str):
@@ -293,20 +335,32 @@ class PresidioPIIDetector(PIIDetector):
         # overlapping recognizer's weaker match on just its domain, letting
         # the containment check below suppress the narrower duplicate.
         for result in sorted(results, key=lambda r: (r.start, -(r.end - r.start))):
-            span_text = text[result.start:result.end].strip()
+            raw_text = text[result.start:result.end]
+            span_text = raw_text.strip()
             if not span_text:
                 continue
-            if any(result.start >= s and result.end <= e for s, e in accepted_ranges):
+            # Track the span's own offsets rather than the recognizer's:
+            # stripping, and the PERSON trim below, can both narrow a span,
+            # and the containment/section checks must judge what is actually
+            # accepted. Recording the un-narrowed range would let a trimmed
+            # PERSON hit swallow a later, legitimate match sitting in the
+            # tail it just discarded ("...\nLocation: Auckland").
+            span_start = result.start + raw_text.index(span_text)
+            span_end = span_start + len(span_text)
+            if any(span_start >= s and span_end <= e for s, e in accepted_ranges):
                 continue
 
-            if result.entity_type == "PERSON" and not _looks_like_person_name(span_text):
-                self._rejections.append(
-                    {"reason": "not_name_shaped", "kind": "person_name", "text": span_text}
-                )
-                continue
+            if result.entity_type == "PERSON":
+                name = _person_name_fragment(span_text)
+                if name is None:
+                    self._rejections.append(
+                        {"reason": "not_name_shaped", "kind": "person_name", "text": span_text}
+                    )
+                    continue
+                span_text, span_end = name, span_start + len(name)
 
             if result.entity_type == "URL" and not _looks_like_personal_link(
-                text, result.start, span_text
+                text, span_start, span_text
             ):
                 self._rejections.append(
                     {"reason": "not_a_personal_link", "kind": "other_identifier", "text": span_text}
@@ -314,9 +368,9 @@ class PresidioPIIDetector(PIIDetector):
                 continue
 
             kind = ENTITY_TO_KIND[result.entity_type]
-            if kind == "person_name" and referee_start is not None and result.start >= referee_start:
+            if kind == "person_name" and referee_start is not None and span_start >= referee_start:
                 kind = "referee"
-            elif kind == "person_name" and content_start is not None and result.start >= content_start:
+            elif kind == "person_name" and content_start is not None and span_start >= content_start:
                 self._rejections.append(
                     {"reason": "outside_header_block", "kind": kind, "text": span_text}
                 )
@@ -336,7 +390,7 @@ class PresidioPIIDetector(PIIDetector):
                 self._rejections.append({"reason": "not_a_parseable_date", "kind": kind, "text": span_text})
                 continue
 
-            # Same grounding + heuristic guards defined in pii_detector.py
+            # Same grounding + heuristic guards defined in pii_base.py
             # (is_valid_pii_span, CONTACT_OR_ID_PATTERN) — shared rather
             # than reimplemented here.
             if not cv.contains(span_text):
@@ -350,7 +404,7 @@ class PresidioPIIDetector(PIIDetector):
             if not key or key in seen:
                 continue
             seen.add(key)
-            accepted_ranges.append((result.start, result.end))
+            accepted_ranges.append((span_start, span_end))
             spans.append(TextSpan(kind, span_text))
 
         return spans

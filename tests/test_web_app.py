@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from src.api.routes import _api_evaluation
 from src.schemas.ingestion import IngestionResult, RedactedCV
 from src.schemas.pii import TextSpan
 from src.services.cv_store import CVNotFoundError
@@ -39,7 +40,10 @@ class FakeLogger:
     def __init__(self, *_args, **_kwargs):
         self.last_run_number = None
 
-    def log_run(self, _result, config=None):
+    # Signatures mirror the real ArtifactLogger, evaluation kwarg included:
+    # a double that silently accepts fewer arguments turns a wiring change
+    # into a 500 at runtime instead of a failure at the call site.
+    def log_run(self, _result, evaluation=None, config=None):
         self.last_run_number = 1
         return "artifacts/run-test.json"
 
@@ -248,3 +252,48 @@ def test_web_ui_renders_requirement_skill_names():
 
     assert "requirement.skill_name" in static_html
     assert "requirement.capability" not in static_html
+
+
+def _ingestion_result(span_count: int = 1) -> IngestionResult:
+    redacted = RedactedCV.from_raw_text(
+        raw_text="Jane Doe\nReact developer",
+        redacted_text="[PERSON_NAME]\nReact developer",
+        pii_spans=[TextSpan(kind="person_name", text="Jane Doe")] * span_count,
+        pii_engine="fake-pii",
+    )
+    return IngestionResult(
+        cv_id=redacted.cv_id,
+        pii_engine="fake-pii",
+        execution_seconds=0.01,
+        pii_spans=redacted.pii_spans,
+        redacted_cv=redacted,
+    )
+
+
+def test_api_evaluation_returns_none_when_nothing_configured(monkeypatch):
+    monkeypatch.setattr("src.api.routes.load_default_evaluation_criteria", dict)
+    assert _api_evaluation(build_pipeline_result()) is None
+
+
+def test_api_evaluation_judges_a_pipeline_result(monkeypatch):
+    monkeypatch.setattr(
+        "src.api.routes.load_default_evaluation_criteria",
+        lambda: {"min_final_relevance": 90},
+    )
+    report = _api_evaluation(build_pipeline_result(final_relevance=45.0))
+    assert not report.passed
+    assert report.checks[0].name == "min_final_relevance"
+
+
+def test_api_evaluation_drops_criteria_the_result_shape_cannot_answer(monkeypatch):
+    # An IngestionResult has no scorecard, so min_final_relevance must be
+    # skipped rather than raising AttributeError and 500-ing /api/ingest
+    # over a config default aimed at the scored endpoints.
+    monkeypatch.setattr(
+        "src.api.routes.load_default_evaluation_criteria",
+        lambda: {"min_final_relevance": 90, "min_pii_spans": 1},
+    )
+    report = _api_evaluation(_ingestion_result())
+    assert report is not None
+    assert [check.name for check in report.checks] == ["min_pii_spans"]
+    assert report.passed

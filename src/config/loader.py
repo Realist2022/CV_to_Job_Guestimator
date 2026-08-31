@@ -49,7 +49,7 @@ def load_model_config(name: str) -> dict:
 
 def load_pipeline_model_names() -> dict[str, str]:
     # Only "evaluation" is a real model role now: PII redaction runs
-    # entirely through presidio (see pii_detector.py), with no LLM in the
+    # entirely through presidio (see pii_base.py), with no LLM in the
     # loop and so nothing to select a model config for.
     pipeline_config = load_yaml("pipeline.yaml")
     models = pipeline_config.get("models")
@@ -71,6 +71,28 @@ def load_pipeline_fallback_names() -> dict[str, str]:
     if not isinstance(fallback_models, dict):
         raise ValueError("configs/pipeline.yaml 'fallback_models' key must be a mapping.")
     return dict(fallback_models)
+
+
+def load_default_evaluation_criteria() -> dict:
+    """Optional `default_evaluation` mapping from configs/pipeline.yaml.
+
+    The baseline thresholds every run is judged against, whichever entry
+    point produced it. A harness task layers its own `evaluation:` block on
+    top per key (see resolve_criteria in src/harness/evaluator.py); the web
+    API has no task file and uses these alone, which is what stopped /api/*
+    artifacts from logging `"evaluation": null`.
+
+    An absent or empty mapping means no baseline: tasks are judged purely by
+    their own criteria and API runs go back to logging a null evaluation.
+
+    Returned as a plain dict rather than an EvaluationCriteria so this module
+    stays independent of src.harness (the harness imports config, not the
+    other way round); the evaluator validates it.
+    """
+    criteria = load_yaml("pipeline.yaml").get("default_evaluation") or {}
+    if not isinstance(criteria, dict):
+        raise ValueError("configs/pipeline.yaml 'default_evaluation' key must be a mapping.")
+    return dict(criteria)
 
 
 def load_pii_detector_names() -> list[str]:

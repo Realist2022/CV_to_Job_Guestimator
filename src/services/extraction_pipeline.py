@@ -24,7 +24,7 @@ from src.services.document_parser import CandidateCV, JobListing
 from src.services.ingestion_pipeline import IngestionPipeline
 from src.services.llm_client import CompletionClient
 from src.services.matching_pipeline import MatchingPipeline
-from src.services.pii_detector import PIIDetector
+from src.services.pii_base import PIIDetector
 from src.services.scoring_engine import RelevanceScoringEngine
 
 

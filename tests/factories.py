@@ -21,6 +21,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from src.schemas.experience import OverallExperienceOutput, WorkRole
+from src.schemas.ingestion import IngestionResult, RedactedCV
 from src.schemas.pii import TextSpan
 from src.schemas.pipeline import PipelineMetrics, PipelineResult, uuid7
 from src.schemas.requirements import SkillMatchResult
@@ -143,5 +144,35 @@ def build_pipeline_result(
             if pii_spans is not None
             else [TextSpan(kind="person_name", text="Jane Doe")]
         ),
+        trace=trace or [],
+    )
+
+
+def build_ingestion_result(
+    *,
+    pii_engine: str = "fake-pii",
+    execution_seconds: float = 0.01,
+    pii_spans: list[TextSpan] | None = None,
+    trace: list | None = None,
+) -> IngestionResult:
+    """A minimal-but-schema-valid IngestionResult.
+
+    The counterpart to build_pipeline_result for tests that need the *other*
+    result shape — notably the ones checking that criteria aimed at a
+    scorecard are handled sanely against a run that has none.
+    """
+    spans = pii_spans if pii_spans is not None else [TextSpan(kind="person_name", text="Jane Doe")]
+    redacted_cv = RedactedCV.from_raw_text(
+        raw_text="Jane Doe\nReact developer",
+        redacted_text="[PERSON_NAME]\nReact developer",
+        pii_spans=spans,
+        pii_engine=pii_engine,
+    )
+    return IngestionResult(
+        cv_id=redacted_cv.cv_id,
+        pii_engine=pii_engine,
+        execution_seconds=execution_seconds,
+        pii_spans=spans,
+        redacted_cv=redacted_cv,
         trace=trace or [],
     )

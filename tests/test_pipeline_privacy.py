@@ -9,7 +9,7 @@ from src.schemas.experience import OverallExperienceOutput
 from src.schemas.requirements import JobRequirementsOutput
 from src.services.document_parser import CandidateCV, JobListing
 from src.services.extraction_pipeline import ExtractionPipeline
-from src.services.pii_detector import (
+from src.services.pii_base import (
     CompositePIIDetector,
     PIIDetector,
     build_pii_detector,

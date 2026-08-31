@@ -1,4 +1,4 @@
-﻿name: model_eval
+name: model_eval
 description: >
   Benchmarks a candidate model (e.g. the fine-tuned LoRA build) on the same
   documents with pass/fail thresholds. Swap models.evaluation to compare.
@@ -16,6 +16,9 @@ inputs:
     - dataSet/tradeMeCV/Sonny H Tapara CV.pdf
 
 evaluation:
+  # Score gates, on top of configs/pipeline.yaml's default_evaluation --
+  # max_execution_seconds and max_attempts are inherited from there, so the
+  # bar this benchmark applies stays the same one every other run is held to
+  # plus these two. Setting either to `null` here would opt out.
   min_final_relevance: 30
   min_skills_match: 30
-  max_execution_seconds: 600

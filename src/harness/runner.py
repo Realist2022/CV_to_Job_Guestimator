@@ -23,10 +23,10 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from src.config import read_yaml
-from src.harness.evaluator import EvaluationReport, ThresholdEvaluator
+from src.config import load_default_evaluation_criteria, read_yaml
+from src.harness.evaluator import EvaluationReport, ThresholdEvaluator, resolve_criteria
 from src.harness.registry import pii_detectors, pipelines
-from src.harness.task_loader import TaskSpec, load_task
+from src.harness.task_loader import EvaluationCriteria, TaskSpec, load_task
 from src.model.adapters import client_from_config
 from src.prompts.templates import EXTRACTION_PROMPT_VERSIONS, MATCHING_PROMPT_VERSIONS
 from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
@@ -38,7 +38,11 @@ from src.services.extraction_pipeline import ExtractionPipeline
 from src.services.ingestion_persistence import persist_ingestion
 from src.services.ingestion_pipeline import IngestionPipeline
 from src.services.matching_pipeline import MatchingPipeline
-from src.services.pii_detector import PII_DETECTOR_FACTORIES, CompositePIIDetector, pii_run_model_config
+from src.services.pii_base import (
+    PII_DETECTOR_FACTORIES,
+    CompositePIIDetector,
+    pii_run_model_config,
+)
 from src.services.scoring_engine import RelevanceScoringEngine
 from src.utils.artifact_logger import ArtifactLogger
 
@@ -77,6 +81,11 @@ class HarnessRunner:
             "detectors"
         ]
         self.verbose: bool = read_yaml(configs_dir / "pipeline.yaml").get("verbose", True)
+        # Baseline thresholds every task inherits (see _criteria_for). Read
+        # through the config package rather than configs_dir so it resolves
+        # the same file the web API reads -- the point of the block is that
+        # both entry points are judged by one definition.
+        self.default_evaluation_criteria: dict = load_default_evaluation_criteria()
 
     def run(self, task: TaskSpec | str | Path) -> HarnessRunReport:
         task_path = None if isinstance(task, TaskSpec) else str(task)
@@ -141,7 +150,7 @@ class HarnessRunner:
             )
 
         result = pipeline.run(listing, cv, verbose=self.verbose, **run_kwargs)
-        evaluation = ThresholdEvaluator(task.evaluation).evaluate(result)
+        evaluation = ThresholdEvaluator(self._criteria_for(task, result)).evaluate(result)
 
         run_config = RunConfig(
             task_name=task.name,
@@ -174,7 +183,7 @@ class HarnessRunner:
 
         cv = _load_document(CandidateCV, task.inputs.candidate_cv, "candidate CV")
         result = pipeline.run(cv, verbose=self.verbose)
-        evaluation = ThresholdEvaluator(task.evaluation).evaluate(result)
+        evaluation = ThresholdEvaluator(self._criteria_for(task, result)).evaluate(result)
 
         ingestion_config = IngestionRunConfig(
             task_name=task.name,
@@ -218,7 +227,7 @@ class HarnessRunner:
         listing = _load_document(JobListing, task.inputs.job_listing, "job listing")
 
         result = pipeline.run(listing, redacted_cv, verbose=self.verbose)
-        evaluation = ThresholdEvaluator(task.evaluation).evaluate(result)
+        evaluation = ThresholdEvaluator(self._criteria_for(task, result)).evaluate(result)
 
         run_config = RunConfig(
             task_name=task.name,
@@ -231,8 +240,10 @@ class HarnessRunner:
             # No PII detector runs for a matching-only task at all — the CV
             # arrived pre-redacted — so this reports the engine that
             # actually produced that earlier redaction, off the RedactedCV
-            # itself, same as everywhere else.
-            pii_model=pii_run_model_config(redacted_cv.pii_engine),
+            # itself, same as everywhere else. ran_this_run=False is what
+            # says so in the artifact rather than leaving it inferrable
+            # from the empty pii_detectors above.
+            pii_model=pii_run_model_config(redacted_cv.pii_engine, ran_this_run=False),
             prompt_versions=MATCHING_PROMPT_VERSIONS,
         )
         logger = ArtifactLogger(output_dir=self.artifacts_dir)
@@ -244,6 +255,17 @@ class HarnessRunner:
             run_number=logger.last_run_number,
             result=result,
             evaluation=evaluation,
+        )
+
+    def _criteria_for(self, task: TaskSpec, result) -> EvaluationCriteria:
+        """The task's own thresholds over configs/pipeline.yaml's baseline.
+
+        `result` is passed because resolve_criteria drops inherited defaults
+        this result shape can't answer -- an ingestion run has no scorecard
+        for a global min_final_relevance to read.
+        """
+        return resolve_criteria(
+            result, task=task.evaluation, defaults=self.default_evaluation_criteria
         )
 
     def _model_config(self, name: str) -> dict:

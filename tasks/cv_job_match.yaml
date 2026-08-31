@@ -1,5 +1,8 @@
-﻿name: cv_job_match
-description: Full CV vs job listing comparison with the cloud evaluation model.
+name: cv_job_match
+description: >
+  Full CV vs job listing comparison with the promoted local fine-tuned build.
+  `cv-guestimator` resolves through configs/llm.yaml to whichever tag is
+  currently the default, so this task follows promotions without being edited.
 pipeline: extraction
 
 models:
@@ -18,5 +21,8 @@ inputs:
 #   skills_match: 0.70
 #   work_experience: 0.30
 
-evaluation:
-  min_final_relevance: 0
+# No task-level thresholds: this everyday comparison inherits
+# configs/pipeline.yaml's default_evaluation (the health checks) and nothing
+# more. It carried `min_final_relevance: 0` before, which passed on any score
+# at all -- a check that cannot fail reports PASS without meaning it. Score
+# gates live on the benchmark task, tasks/model_eval.yaml.

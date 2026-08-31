@@ -1,8 +1,8 @@
-﻿# Pipeline runtime defaults.
+# Pipeline runtime defaults.
 default: extraction
 verbose: true
 models:
-  evaluation: cv-guestimator-v2
+  evaluation: cv-guestimator
 
 # Optional per-role fallback: if the role's primary model (above) fails —
 # the backend is unreachable, or Instructor can't get valid structured
@@ -16,3 +16,39 @@ models:
 # client_from_config() so A/B evaluation runs stay reproducible.
 fallback_models:
   evaluation: gemini-flash
+
+# Baseline pass/fail thresholds applied to EVERY run, from either entry
+# point -- `uv run main.py <task>` and the web API alike. A task's own
+# `evaluation:` block layers on top of this per key, so a task that sets
+# one criterion still inherits the rest, and setting a key to `null` in a
+# task is how it opts out of an inherited default.
+#
+# One definition, both callers: before this existed a CLI run and an
+# equivalent /api/compare were judged differently (or, for the API, not at
+# all -- its artifacts logged "evaluation": null, since an API request has
+# no task file to carry criteria).
+#
+# These default to *health* checks, not score gates: a run's PASS/FAIL
+# should mean "the pipeline behaved", not "this candidate is any good". A
+# genuinely weak candidate scoring 12% is a correct result, not a failure,
+# and reporting FAIL for it would be actively misleading. Score gates
+# belong on a benchmark task -- see tasks/model_eval.yaml, which adds
+# min_final_relevance/min_skills_match on top of these.
+#
+# Remove this key (or empty it) to judge tasks purely by their own criteria
+# and send API runs back to a null evaluation.
+default_evaluation:
+  # Breakage detector: a hang, a silent fall back to the cloud model, or
+  # Ollama missing the tag and inference dropping to CPU. Deliberately loose
+  # -- identical runs swing ~1.6x on a contended GPU, so a tight bound would
+  # fail on thermal state rather than on anything real.
+  max_execution_seconds: 60
+  # >1 means Instructor retried after the model returned output that failed
+  # schema validation. Unlike latency, that is a property of the weights.
+  max_attempts: 1
+
+# An inherited criterion the result shape can't answer is dropped rather
+# than raising -- a global min_final_relevance must not crash an ingestion
+# run that has no scorecard. A criterion written explicitly in a task is
+# never dropped: it fails loudly against the wrong pipeline shape instead
+# of being silently ignored while looking enforced.

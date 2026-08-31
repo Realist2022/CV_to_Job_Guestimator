@@ -49,6 +49,36 @@ class RunModelConfig(StrictBaseModel):
         )
 
 
+class PIIRunConfig(StrictBaseModel):
+    """Which PII detector is behind a run's redacted CV.
+
+    Deliberately not RunModelConfig: PII redaction runs entirely through
+    presidio with no LLM in the loop (see pii_base.py), so that schema's
+    `temperature` and `fallback_used` were dead weight here -- hardcoded 0.0
+    and always False, left over from when a `pii` model role existed and
+    "model"/"regex" detectors were selectable (removed in 1b5e3cc, Aug 2026).
+    Reporting them invited the reading that PII had a model that could fall
+    back to the cloud. It cannot, and never could.
+
+    `ran_this_run` is the field that distinction actually needs: on a
+    "matching" run no detector executes at all -- the CV arrived pre-redacted
+    -- so `engine` names whichever detector produced that *earlier*
+    redaction. Previously that was only inferrable from `pii_detectors: []`
+    two fields up.
+    """
+
+    name: str = Field(min_length=1)
+    engine: str = Field(min_length=1, description="Detector string, e.g. 'presidio:en_core_web_sm'.")
+    ran_this_run: bool = Field(
+        description=(
+            "True if redaction executed during this run ('extraction' / "
+            "'ingestion'). False if the CV arrived already redacted "
+            "('matching'), in which case `engine` is historical provenance "
+            "read off the stored RedactedCV, not work this run performed."
+        )
+    )
+
+
 class RunConfig(StrictBaseModel):
     """Snapshot of the config that produced a run, for later reproducibility.
 
@@ -58,13 +88,19 @@ class RunConfig(StrictBaseModel):
     contain later.
     """
 
+    # Together these record what produced the run: both set = a CLI run from
+    # a tasks/*.yaml file; task_name only = a programmatic runner.run(TaskSpec)
+    # call (see HarnessRunner.run); an "api:" prefix = a web endpoint, which
+    # has no task file at all, so task_path stays None rather than inventing
+    # a path that never existed. Both None means the source predates that
+    # labelling (any web-API artifact logged before 2026-08-30).
     task_name: str | None = None
     task_path: str | None = None
     pipeline: str = Field(min_length=1)
     scoring_weights: dict[str, float]
     pii_detectors: list[str] = Field(default_factory=list)
     evaluation_model: RunModelConfig
-    pii_model: RunModelConfig
+    pii_model: PIIRunConfig
     prompt_versions: dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -87,7 +123,15 @@ class ArtifactMetadata(StrictBaseModel):
 
 
 class RunArtifact(StrictBaseModel):
-    schema_version: Literal["3.0", "3.1", "3.2", "3.3", "3.4"] = "3.4"
+    # A stamp on what this schema writes, NOT a claim to read older versions.
+    # It used to list every version back to "3.0", which read as backward
+    # compatibility that never existed: StrictBaseModel forbids extra keys, so
+    # 3.0-3.2 artifacts (they carry a `redacted_cv` field, dropped in 3.3 for
+    # `redacted_cv_trace_id`) fail validation regardless of what this accepts.
+    # Nothing in the repo reads an artifact back except tests validating what
+    # they just wrote, so the honest move is to stamp one version and let
+    # scripts/compare_runs.py handle older files as plain JSON.
+    schema_version: Literal["3.5"] = "3.5"
     metadata: ArtifactMetadata
     config: RunConfig | None = None
     skills_evaluation: SkillMatchResult
@@ -140,10 +184,11 @@ class IngestionRunConfig(StrictBaseModel):
     placeholder values here. Neither is honest, hence a separate schema.
     """
 
+    # Same provenance convention as RunConfig's pair — see the comment there.
     task_name: str | None = None
     task_path: str | None = None
     pii_detectors: list[str] = Field(default_factory=list)
-    pii_model: RunModelConfig
+    pii_model: PIIRunConfig
     prompt_versions: dict[str, str] = Field(default_factory=dict)
 
 
@@ -163,7 +208,8 @@ class IngestionArtifact(StrictBaseModel):
     report, since matching never ran as part of this task.
     """
 
-    schema_version: Literal["1.0", "1.1"] = "1.1"
+    # One stamp, not a compatibility claim — see RunArtifact.schema_version.
+    schema_version: Literal["1.2"] = "1.2"
     metadata: IngestionArtifactMetadata
     config: IngestionRunConfig | None = None
     cv_id: str = Field(min_length=1)

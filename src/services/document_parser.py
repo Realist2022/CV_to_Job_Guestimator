@@ -199,6 +199,26 @@ class JobListing(SourceDocument):
         return section if len(section) > 120 else self.text
 
 
+def _whole_word_pattern(text: str) -> str:
+    """`text` as a literal regex, refusing to match mid-word.
+
+    Plain re.escape matched inside longer words, so a span redacted the
+    middle of unrelated content: a (false-positive) person_name span "Java"
+    rewrote every "JavaScript" in a CV to "[PERSON_NAME]Script". \\b can't
+    be used unconditionally — a span may begin or end on punctuation
+    ("(021) 555-1234", "• Skill"), where \\b asserts the opposite of what is
+    wanted — so each edge is guarded only when it is itself a word
+    character. This also stops a short span from matching inside a
+    redaction token already substituted in ("Name" inside "[PERSON_NAME]").
+    """
+    pattern = re.escape(text)
+    if re.match(r"\w", text):
+        pattern = r"(?<!\w)" + pattern
+    if re.search(r"\w$", text):
+        pattern = pattern + r"(?!\w)"
+    return pattern
+
+
 class CandidateCV(SourceDocument):
     REDACTION_TOKEN = "[{kind}]"
 
@@ -207,7 +227,7 @@ class CandidateCV(SourceDocument):
         for span in sorted(spans, key=lambda s: len(s.text), reverse=True):
             if span.text.strip():
                 result = re.sub(
-                    re.escape(span.text),
+                    _whole_word_pattern(span.text),
                     self.REDACTION_TOKEN.format(kind=span.kind.upper()),
                     result, flags=re.IGNORECASE,
                 )

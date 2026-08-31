@@ -1,9 +1,32 @@
+"""The contract and shared rules every PII detector is built on.
+
+Deliberately contains no detector of its own. PresidioPIIDetector
+(presidio_detector.py) is the only implementation, and it imports the
+validation guards below rather than restating them, so a second detector
+would inherit one definition of what counts as a real date of birth or a
+real contact identifier instead of reinventing it.
+
+What lives here:
+  - Span validation shared by all detectors: is_valid_pii_span and the
+    patterns behind it (date-range rejection, DOB parsing, the
+    contact/identifier shape check).
+  - PIIDetector, the abstract base every detector implements.
+  - CompositePIIDetector plus the name -> factory registry that
+    configs/pii_policy.yaml's `detectors:` list resolves against.
+  - pii_run_model_config, which describes the PII step in a run artifact.
+
+Named `pii_base` rather than `pii_detector` because the latter promised a
+detector and delivered an interface -- the file was routinely mistaken for
+a redundant twin of presidio_detector.py. `base` matches the convention
+already used by src/schemas/base.py.
+"""
+
 import re
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from typing import Callable, Dict, Final, List, Optional
 
-from src.schemas.artifact import RunModelConfig
+from src.schemas.artifact import PIIRunConfig
 from src.schemas.pii import TextSpan
 from src.services.document_parser import CandidateCV, normalise
 
@@ -187,16 +210,22 @@ def build_pii_detector(names: List[str]) -> CompositePIIDetector:
     return CompositePIIDetector(*detectors)
 
 
-def pii_run_model_config(engine_name: str) -> RunModelConfig:
-    """RunModelConfig for the PII role, given an already-run result's engine
+def pii_run_model_config(engine_name: str, *, ran_this_run: bool = True) -> PIIRunConfig:
+    """PIIRunConfig for the PII role, given an already-run result's engine
     name (e.g. IngestionResult.pii_engine/PipelineResult.pii_engine).
 
     No LLM client or configs/llm.yaml key applies to PII redaction (see
-    PIIDetector.engine_name) — `name` is just "presidio", `engine` is
-    whatever the detector actually reported, and `temperature` is fixed at
-    0.0 since nothing here is sampled. Callers derive `engine_name` from a
-    result object rather than reading `detector.engine_name` directly, so
-    this still works when the pipeline that produced the result isn't the
-    exact object that built the detector (e.g. a test double standing in
-    for IngestionPipeline/ExtractionPipeline)."""
-    return RunModelConfig(name="presidio", engine=engine_name, temperature=0.0)
+    PIIDetector.engine_name) — `name` is just "presidio" and `engine` is
+    whatever the detector actually reported. Callers derive `engine_name`
+    from a result object rather than reading `detector.engine_name`
+    directly, so this still works when the pipeline that produced the
+    result isn't the exact object that built the detector (e.g. a test
+    double standing in for IngestionPipeline/ExtractionPipeline).
+
+    Pass ran_this_run=False on a "matching" run, where no detector executed
+    and `engine_name` comes off a RedactedCV redacted by some earlier run.
+    The default is True because that is the common case (extraction and
+    ingestion both redact), and because a caller that forgets it on a
+    matching run overstates what happened rather than understating it —
+    so keep it explicit at those two call sites."""
+    return PIIRunConfig(name="presidio", engine=engine_name, ran_this_run=ran_this_run)

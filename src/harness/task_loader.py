@@ -16,7 +16,7 @@ class ModelSelection(StrictBaseModel):
 
     Optional because not every pipeline needs it: an "ingestion" task never
     calls an evaluation model. There is no "pii" role at all — PII
-    redaction runs entirely through presidio (see pii_detector.py), with no
+    redaction runs entirely through presidio (see pii_base.py), with no
     LLM in the loop and so nothing to select a model config for.
     """
 
@@ -42,6 +42,13 @@ class EvaluationCriteria(StrictBaseModel):
     min_skills_match: float | None = None
     min_pii_spans: int | None = None
     max_execution_seconds: float | None = None
+    # Highest TraceSpan.attempts across the run's LLM steps. >1 means
+    # Instructor retried because the model returned output that failed
+    # schema validation -- a property of the weights, unlike wall-clock
+    # time, which on a contended local GPU swings ~1.6x between identical
+    # runs. Set it to 1 on a benchmark task to catch a build that starts
+    # emitting malformed structured output.
+    max_attempts: int | None = None
 
 
 class TaskSpec(StrictBaseModel):

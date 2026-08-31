@@ -6,7 +6,33 @@ from src.services import PDFTextExtractionError
 DEFAULT_TASK = "tasks/cv_job_match.yaml"
 
 
+def _use_utf8_output() -> None:
+    """Make stdout/stderr able to carry this report's ✓/✗ and box characters.
+
+    Windows consoles and redirected pipes default to cp1252, which raises
+    UnicodeEncodeError on the first check mark. The run's artifact is already
+    safely on disk by then (HarnessRunner.run logs it before returning), so
+    nothing is lost but the human-readable summary — and the traceback that
+    replaces it reads like a pipeline failure when it is only a printing one.
+    Reconfigure to UTF-8; fall back to replacing unencodable characters so
+    that a terminal which cannot do UTF-8 degrades to "?" instead of dying.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        # getattr rather than a bare call: sys.stdout is only a TextIOWrapper
+        # by convention, and something capturing output (a test harness, a
+        # notebook) can substitute a plain TextIO with no reconfigure at all.
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            # Stream can't be re-encoded; worst case is the original crash.
+            continue
+
+
 def main():
+    _use_utf8_output()
     task_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TASK
 
     runner = HarnessRunner()
@@ -17,11 +43,33 @@ def main():
         return
 
     pipeline_data = report.result
+    # An "ingestion" task returns an IngestionResult: PII redaction only, no
+    # evaluation model and no scorecard/skills/experience to report. The
+    # scored sections are guarded on that rather than assumed, because
+    # reading .engine off an IngestionResult raised AttributeError and took
+    # the whole summary down *after* the run had already been logged --
+    # `uv run main.py tasks/cv_ingest.yaml` printed a traceback instead of
+    # its result, despite the run itself having succeeded.
+    scored = hasattr(pipeline_data, "scorecard")
+    engine_note = f"Evaluation Engine: {pipeline_data.engine} | " if scored else ""
     print(
         f"Task: {report.task_name} | PII Engine: {pipeline_data.pii_engine} | "
-        f"Evaluation Engine: {pipeline_data.engine} | Architecture: Multi-Agent Instructor Harness"
+        f"{engine_note}Architecture: Multi-Agent Instructor Harness"
     )
 
+    if scored:
+        _print_scorecard(pipeline_data)
+    else:
+        print("\n" + "=" * 66)
+        print("INGESTION OUTPUT")
+        print("-" * 66)
+        print(f"cv_id:              {pipeline_data.cv_id}")
+        print(f"PII spans redacted: {len(pipeline_data.pii_spans)}")
+
+    _print_trace_and_evaluation(pipeline_data, report)
+
+
+def _print_scorecard(pipeline_data) -> None:
     skills_eval = pipeline_data.skills_eval
     overall_experience = pipeline_data.overall_experience
     scorecard = pipeline_data.scorecard
@@ -70,6 +118,8 @@ def main():
         print(f"  Rationale: {role.match_rationale}")
         print()
 
+
+def _print_trace_and_evaluation(pipeline_data, report) -> None:
     if pipeline_data.trace:
         print("\nPIPELINE TRACE")
         print("-" * 66)

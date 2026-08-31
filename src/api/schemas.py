@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel
 
+from src.schemas.evaluation import EvaluationReport
 from src.schemas.experience import OverallExperienceOutput
 from src.schemas.pipeline import PipelineMetrics
 from src.schemas.requirements import SkillMatchResult
@@ -18,6 +19,11 @@ class CompareResponse(BaseModel):
     scoring_weights: dict[str, float]
     skills_evaluation: SkillMatchResult
     overall_experience: OverallExperienceOutput
+    # PASS/FAIL against configs/pipeline.yaml's `api_evaluation` thresholds,
+    # mirroring what a harness task's `evaluation:` block gives a CLI run.
+    # None when no criteria are configured (or none apply to this result
+    # shape) -- an absent verdict, not a failed one.
+    evaluation: EvaluationReport | None = None
 
 
 class IngestResponse(BaseModel):
@@ -30,6 +36,11 @@ class IngestResponse(BaseModel):
     pii_engine: str
     execution_seconds: float
     pii_span_count: int
+    # PASS/FAIL against configs/pipeline.yaml's `api_evaluation` thresholds,
+    # mirroring what a harness task's `evaluation:` block gives a CLI run.
+    # None when no criteria are configured (or none apply to this result
+    # shape) -- an absent verdict, not a failed one.
+    evaluation: EvaluationReport | None = None
 
 
 class MatchResponse(BaseModel):
@@ -44,3 +55,8 @@ class MatchResponse(BaseModel):
     scoring_weights: dict[str, float]
     skills_evaluation: SkillMatchResult
     overall_experience: OverallExperienceOutput
+    # PASS/FAIL against configs/pipeline.yaml's `api_evaluation` thresholds,
+    # mirroring what a harness task's `evaluation:` block gives a CLI run.
+    # None when no criteria are configured (or none apply to this result
+    # shape) -- an absent verdict, not a failed one.
+    evaluation: EvaluationReport | None = None

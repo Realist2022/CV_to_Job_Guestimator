@@ -15,42 +15,26 @@ models:
     api_key: ollama
     temperature: 0.0
 
-  # Fine-tuned LoRA model served by Ollama (see docker/ollama/Modelfile).
-  # Enable once the model has been built with `ollama create`.
+  # The promoted default: the fine-tuned build every everyday task resolves to.
+  # Pinned to an explicit tag rather than :latest, so a run artifact's `engine`
+  # string always names the exact weights that produced it and re-tagging in
+  # Ollama can never silently change what a past run was measuring.
+  # Promoting a future build = change this one line, then re-run
+  # tasks/model_eval.yaml to confirm it still clears the thresholds.
   cv-guestimator:
-    provider: ollama
-    model: cv-guestimator:latest
-    base_url: http://localhost:11434/v1
-    api_key: ollama
-    temperature: 0.0
-
-  # A/B control: the SAME weights as cv-guestimator:latest above, rebuilt from
-  # the corrected docker/ollama/Modelfile. Isolates "new weights" from "changed
-  # serving config" -- compare against :latest to size the serving effect, and
-  # against v2 to size the weights effect. Delete once the A/B is settled.
-  cv-guestimator-v1-fixed:
-    provider: ollama
-    model: cv-guestimator:v1-fixed
-    base_url: http://localhost:11434/v1
-    api_key: ollama
-    temperature: 0.0
-
-  # Newer FT_MODEL2 export, kept as a separate tag so tasks/model_eval.yaml can
-  # A/B it against the :latest build above. Promote to :latest (or retag) once
-  # v2 is confirmed better; until then both entries must stay.
-  cv-guestimator-v2:
     provider: ollama
     model: cv-guestimator:v2
     base_url: http://localhost:11434/v1
     api_key: ollama
     temperature: 0.0
 
-  # Latest FT_MODEL2 export (trained on data/processed/train.jsonl rebuilt
-  # 2026-08-27). Kept beside v2 so the three builds stay comparable; collapse
-  # these back to a single cv-guestimator entry once a winner is promoted.
-  cv-guestimator-v3:
+  # Rollback / A-B control: the Aug 24 2026 weights (the build v2 replaced),
+  # served from the same corrected Modelfile as the default above. Kept so a
+  # suspected v2 regression can be checked against the previous build without
+  # re-exporting anything -- `uv run main.py tasks/model_eval_v1_fixed.yaml`.
+  cv-guestimator-v1-fixed:
     provider: ollama
-    model: cv-guestimator:v3
+    model: cv-guestimator:v1-fixed
     base_url: http://localhost:11434/v1
     api_key: ollama
     temperature: 0.0
