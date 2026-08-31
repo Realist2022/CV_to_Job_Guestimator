@@ -19,7 +19,7 @@ from src.services.cv_store import CVIngestionStore, CVNotFoundError
 from src.services.document_parser import CandidateCV, JobListing
 from src.services.ingestion_pipeline import IngestionPipeline
 from src.services.matching_pipeline import MatchingPipeline
-from src.services.pii_detector import PIIDetector
+from src.services.pii_base import PIIDetector
 from tests.factories import RecordingClient
 
 

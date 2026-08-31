@@ -53,7 +53,7 @@ class PIIRunConfig(StrictBaseModel):
     """Which PII detector is behind a run's redacted CV.
 
     Deliberately not RunModelConfig: PII redaction runs entirely through
-    presidio with no LLM in the loop (see pii_detector.py), so that schema's
+    presidio with no LLM in the loop (see pii_base.py), so that schema's
     `temperature` and `fallback_used` were dead weight here -- hardcoded 0.0
     and always False, left over from when a `pii` model role existed and
     "model"/"regex" detectors were selectable (removed in 1b5e3cc, Aug 2026).

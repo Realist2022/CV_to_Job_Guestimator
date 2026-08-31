@@ -1,7 +1,7 @@
 """Presidio + spaCy NER PII detector — the only PII detector this project
 has: fully local, in-process, no LLM/Ollama roundtrip, no network call,
 deterministic given the same spaCy model. Registered as the "presidio" name
-in PII_DETECTOR_FACTORIES (see pii_detector.py).
+in PII_DETECTOR_FACTORIES (see pii_base.py).
 
 Per-PIIKind coverage:
   - person_name, other_identifier (email/phone/url): spaCy PERSON NER and
@@ -37,7 +37,7 @@ Per-PIIKind coverage:
     city name is not treated as a specific residential address.
 
 The heavy AnalyzerEngine/spaCy model load only happens once this module is
-actually imported (see the lazy import in pii_detector.py's
+actually imported (see the lazy import in pii_base.py's
 PII_DETECTOR_FACTORIES).
 """
 
@@ -46,7 +46,7 @@ from typing import Dict, Final, List, Optional
 
 from src.schemas.pii import TextSpan
 from src.services.document_parser import CandidateCV, normalise
-from src.services.pii_detector import (
+from src.services.pii_base import (
     CONTACT_OR_ID_PATTERN,
     PIIDetector,
     is_valid_pii_span,
@@ -62,7 +62,7 @@ from src.services.pii_detector import (
 # and would otherwise be rejected despite being a correct, well-typed hit.
 # NZ_IRD_NUMBER/NZ_DRIVERS_LICENCE are the same kind of precise, fully
 # deterministic regex match (ported from RegexPIIDetector's own patterns —
-# see pii_detector.py) rather than a NER guess, so they get the same
+# see pii_base.py) rather than a NER guess, so they get the same
 # treatment as EMAIL_ADDRESS/PHONE_NUMBER, not URL's extra context guard.
 PRE_VALIDATED_ENTITY_TYPES: Final = {
     "EMAIL_ADDRESS",
@@ -390,7 +390,7 @@ class PresidioPIIDetector(PIIDetector):
                 self._rejections.append({"reason": "not_a_parseable_date", "kind": kind, "text": span_text})
                 continue
 
-            # Same grounding + heuristic guards defined in pii_detector.py
+            # Same grounding + heuristic guards defined in pii_base.py
             # (is_valid_pii_span, CONTACT_OR_ID_PATTERN) — shared rather
             # than reimplemented here.
             if not cv.contains(span_text):

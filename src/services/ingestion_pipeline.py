@@ -16,7 +16,7 @@ from src.config import load_pii_detector_names
 from src.schemas.ingestion import IngestionResult, RedactedCV
 from src.schemas.pipeline import TraceSpan, uuid7
 from src.services.document_parser import CandidateCV
-from src.services.pii_detector import PIIDetector, build_pii_detector
+from src.services.pii_base import PIIDetector, build_pii_detector
 
 
 class IngestionPipeline:
@@ -39,7 +39,7 @@ class IngestionPipeline:
                 step="pii_redaction",
                 started_at=started_at,
                 duration_seconds=round(time.time() - step_started, 3),
-                # No LLM call in the PII path (see pii_detector.py) — there's
+                # No LLM call in the PII path (see pii_base.py) — there's
                 # nothing to retry, so no attempts count applies here.
                 attempts=None,
             )

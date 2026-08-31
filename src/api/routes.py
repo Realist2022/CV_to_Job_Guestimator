@@ -28,7 +28,7 @@ from src.services import (
     RelevanceScoringEngine,
 )
 from src.services.ingestion_persistence import persist_ingestion
-from src.services.pii_detector import pii_run_model_config
+from src.services.pii_base import pii_run_model_config
 from src.utils import ArtifactLogger
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024

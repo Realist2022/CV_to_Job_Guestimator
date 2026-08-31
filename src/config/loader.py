@@ -49,7 +49,7 @@ def load_model_config(name: str) -> dict:
 
 def load_pipeline_model_names() -> dict[str, str]:
     # Only "evaluation" is a real model role now: PII redaction runs
-    # entirely through presidio (see pii_detector.py), with no LLM in the
+    # entirely through presidio (see pii_base.py), with no LLM in the
     # loop and so nothing to select a model config for.
     pipeline_config = load_yaml("pipeline.yaml")
     models = pipeline_config.get("models")

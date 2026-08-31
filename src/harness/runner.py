@@ -38,7 +38,7 @@ from src.services.extraction_pipeline import ExtractionPipeline
 from src.services.ingestion_persistence import persist_ingestion
 from src.services.ingestion_pipeline import IngestionPipeline
 from src.services.matching_pipeline import MatchingPipeline
-from src.services.pii_detector import (
+from src.services.pii_base import (
     PII_DETECTOR_FACTORIES,
     CompositePIIDetector,
     pii_run_model_config,

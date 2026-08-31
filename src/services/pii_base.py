@@ -1,3 +1,26 @@
+"""The contract and shared rules every PII detector is built on.
+
+Deliberately contains no detector of its own. PresidioPIIDetector
+(presidio_detector.py) is the only implementation, and it imports the
+validation guards below rather than restating them, so a second detector
+would inherit one definition of what counts as a real date of birth or a
+real contact identifier instead of reinventing it.
+
+What lives here:
+  - Span validation shared by all detectors: is_valid_pii_span and the
+    patterns behind it (date-range rejection, DOB parsing, the
+    contact/identifier shape check).
+  - PIIDetector, the abstract base every detector implements.
+  - CompositePIIDetector plus the name -> factory registry that
+    configs/pii_policy.yaml's `detectors:` list resolves against.
+  - pii_run_model_config, which describes the PII step in a run artifact.
+
+Named `pii_base` rather than `pii_detector` because the latter promised a
+detector and delivered an interface -- the file was routinely mistaken for
+a redundant twin of presidio_detector.py. `base` matches the convention
+already used by src/schemas/base.py.
+"""
+
 import re
 from abc import ABC, abstractmethod
 from datetime import date, datetime

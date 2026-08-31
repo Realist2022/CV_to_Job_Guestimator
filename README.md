@@ -93,7 +93,7 @@ The web UI wraps the same pipelines with a drag-and-drop upload page and `/api/c
 | `src/services/document_parser.py` | Defines source document types and extracts text from PDF files using `pypdf`, PyMuPDF fallback, and OCR fallback. |
 | `src/services/llm_client.py` | Wraps the OpenAI-compatible client with Instructor for structured Pydantic outputs. |
 | `src/services/agents.py` | Implements the requirement extraction, skill matching, and overall experience agents. |
-| `src/services/pii_detector.py` | Shared PII detector base/composite (`CompositePIIDetector`) and validation guards; composes detectors named in `configs/pii_policy.yaml`. |
+| `src/services/pii_base.py` | Shared PII detector base/composite (`CompositePIIDetector`) and validation guards; composes detectors named in `configs/pii_policy.yaml`. |
 | `src/services/presidio_detector.py` | The PII detector: local spaCy/Presidio NER + custom pattern recognizers — no LLM call, fully deterministic. |
 | `src/services/ingestion_pipeline.py` | Standalone pipeline: redacts a raw CV once and produces a `RedactedCV`. |
 | `src/services/matching_pipeline.py` | Standalone pipeline: matches a `RedactedCV` against a job listing. Never imports `CandidateCV` or a PII detector. |
@@ -538,7 +538,7 @@ The repository is configured to ignore:
 |   |
 |   |-- services/                 # LAYER: the actual business logic
 |   |   |-- document_parser.py    #   PDF/TXT -> text (pypdf -> PyMuPDF -> OCR fallbacks)
-|   |   |-- pii_detector.py       #   detector base + CompositePIIDetector + guards
+|   |   |-- pii_base.py       #   detector base + CompositePIIDetector + guards
 |   |   |-- presidio_detector.py  #   local spaCy/Presidio NER + NZ pattern recognizers
 |   |   |-- ingestion_pipeline.py #   raw CV -> RedactedCV                 (PII stage)
 |   |   |-- matching_pipeline.py  #   RedactedCV + job -> result           (no PII imports)

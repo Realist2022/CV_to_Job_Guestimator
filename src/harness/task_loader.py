@@ -16,7 +16,7 @@ class ModelSelection(StrictBaseModel):
 
     Optional because not every pipeline needs it: an "ingestion" task never
     calls an evaluation model. There is no "pii" role at all — PII
-    redaction runs entirely through presidio (see pii_detector.py), with no
+    redaction runs entirely through presidio (see pii_base.py), with no
     LLM in the loop and so nothing to select a model config for.
     """
 

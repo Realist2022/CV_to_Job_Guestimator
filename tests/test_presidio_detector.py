@@ -22,7 +22,7 @@ import unittest
 
 from src.schemas.pii import TextSpan
 from src.services.document_parser import CandidateCV
-from src.services.pii_detector import PII_DETECTOR_FACTORIES, build_pii_detector
+from src.services.pii_base import PII_DETECTOR_FACTORIES, build_pii_detector
 from src.services.presidio_detector import (
     PresidioPIIDetector,
     _content_section_start,
@@ -231,7 +231,7 @@ class PresidioDetectorTest(unittest.TestCase):
         self.assertEqual(detector.score_threshold, 0.9)
 
     def test_nz_ird_number_and_drivers_licence_detected_natively(self):
-        # Ported from RegexPIIDetector.PATTERNS (pii_detector.py) so
+        # Ported from RegexPIIDetector.PATTERNS (pii_base.py) so
         # "presidio" alone covers every PIIKind without needing "regex"
         # composed alongside it — see the module docstring's coverage
         # notes, now closed for these two.
