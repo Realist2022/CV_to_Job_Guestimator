@@ -1,0 +1,32 @@
+# Keeps the docker build context small and free of personal data.
+# Same reasoning as .gcloudignore -- see the comment at the top of that file.
+# serving/ is intentionally absent: Dockerfile.api COPYs it, and the pinned
+# CV is what this service exists to serve.
+
+dataSet/
+redacted_cvs/
+artifacts/
+
+.env
+.env.*
+!.env.example
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+.git/
+.github/
+.vscode/
+.idea/
+
+docker/ollama/*.gguf
+training_data/dataset.jsonl
+
+tests/
+PR-*.md

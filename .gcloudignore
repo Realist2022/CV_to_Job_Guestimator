@@ -1,0 +1,49 @@
+# What `gcloud run deploy --source .` must NOT upload to Cloud Build.
+#
+# This file is deliberately explicit rather than relying on gcloud's fallback
+# to .gitignore. The fallback would very likely do the right thing here, but
+# "very likely" is not the standard for personal data: dataSet/ holds real
+# CVs and job listings, redacted_cvs/ holds detected PII values verbatim in
+# its pii_spans lists, and artifacts/ embeds extracted CV and listing content
+# in every run log. None of that has any business leaving this machine, and a
+# build context is not somewhere you can un-send it from.
+#
+# Anything the image actually needs is COPYed by docker/Dockerfile.api --
+# note serving/ is NOT excluded, since the pinned CV is what the deployment
+# exists to serve.
+
+# Personal data. Never upload.
+dataSet/
+redacted_cvs/
+artifacts/
+
+# Secrets. Supplied to Cloud Run from Secret Manager, never baked in.
+.env
+.env.*
+!.env.example
+
+# Local environments and build junk
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# History and tooling
+.git/
+.github/
+.vscode/
+.idea/
+
+# Large local model exports
+docker/ollama/*.gguf
+training_data/dataset.jsonl
+
+# Not needed to run the service
+tests/
+scripts/
+PR-*.md
+README.md

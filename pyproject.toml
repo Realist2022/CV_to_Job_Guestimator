@@ -26,6 +26,7 @@ dependencies = [
     # test_presidio_detector.py) work on a clean `uv sync`, including in CI.
     "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "uvicorn>=0.52.1",
+    "google-cloud-storage>=3.13.1",
 ]
 
 [dependency-groups]

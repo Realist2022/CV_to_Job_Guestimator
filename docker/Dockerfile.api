@@ -19,5 +19,10 @@ COPY main.py ./
 
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Cloud Run injects PORT (8080) and health-checks exactly that port, so the
+# port cannot be baked in. Shell form on purpose: the exec form would pass
+# "$PORT" to uvicorn as a literal string. Defaults to 8000 so `docker run`
+# and docker-compose behave as before.
+ENV PORT=8000
 EXPOSE 8000
-CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD exec uvicorn src.api.app:app --host 0.0.0.0 --port ${PORT}

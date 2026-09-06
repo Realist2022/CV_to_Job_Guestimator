@@ -83,13 +83,16 @@ class FakeClient:
 
 def test_compare_endpoint_accepts_text_uploads_without_real_model_calls(monkeypatch):
     monkeypatch.setattr("src.api.routes.ExtractionPipeline", FakePipeline)
-    monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeLogger)
+    monkeypatch.setattr("src.api.routes.build_artifact_logger", lambda *a, **k: FakeLogger())
     # /api/compare's on_ingested hook persists through
     # src.services.ingestion_persistence.persist_ingestion, not routes.py's
-    # own CVIngestionStore/ArtifactLogger names — patch it there too, or
+    # own CVIngestionStore/build_artifact_logger names — patch it there too, or
     # this "without_real_model_calls" test silently writes real files.
     monkeypatch.setattr("src.services.ingestion_persistence.CVIngestionStore", FakeCVIngestionStore)
-    monkeypatch.setattr("src.services.ingestion_persistence.ArtifactLogger", FakeLogger)
+    monkeypatch.setattr(
+        "src.services.ingestion_persistence.build_artifact_logger",
+        lambda *a, **k: FakeLogger(),
+    )
     monkeypatch.setattr(
         "src.api.routes.client_for_role",
         lambda role: FakeClient(model=f"fake-{role}"),
@@ -198,9 +201,12 @@ def test_ingest_endpoint_persists_redacted_cv_and_returns_cv_id(monkeypatch):
     monkeypatch.setattr("src.api.routes.IngestionPipeline", FakeIngestionPipeline)
     # /api/ingest persists through
     # src.services.ingestion_persistence.persist_ingestion, so that's where
-    # CVIngestionStore/ArtifactLogger need patching, not routes.py.
+    # CVIngestionStore/build_artifact_logger need patching, not routes.py.
     monkeypatch.setattr("src.services.ingestion_persistence.CVIngestionStore", FakeCVIngestionStore)
-    monkeypatch.setattr("src.services.ingestion_persistence.ArtifactLogger", FakeArtifactLogger)
+    monkeypatch.setattr(
+        "src.services.ingestion_persistence.build_artifact_logger",
+        lambda *a, **k: FakeArtifactLogger(),
+    )
     monkeypatch.setattr(
         "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
     )
@@ -222,7 +228,9 @@ def test_ingest_endpoint_persists_redacted_cv_and_returns_cv_id(monkeypatch):
 
 def _match_client(monkeypatch) -> TestClient:
     monkeypatch.setattr("src.api.routes.MatchingPipeline", FakeMatchingPipeline)
-    monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeArtifactLogger)
+    monkeypatch.setattr(
+        "src.api.routes.build_artifact_logger", lambda *a, **k: FakeArtifactLogger()
+    )
     monkeypatch.setattr("src.api.routes.load_serving_cv", _serving_cv)
     monkeypatch.setattr(
         "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")

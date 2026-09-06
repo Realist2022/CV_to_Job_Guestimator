@@ -2,6 +2,7 @@ import os
 
 from fastapi import FastAPI
 
+from src.api.auth import warn_if_unauthenticated
 from src.api.routes import router, upload_router
 
 
@@ -30,6 +31,8 @@ def create_app() -> FastAPI:
     visitor's browser. So "/" 404s by design, and nothing here renders
     anything -- the one route a deployment needs is /api/match.
     """
+    warn_if_unauthenticated()
+
     application = FastAPI(title="CV to Job Guestimator")
     application.include_router(router)
     if cv_upload_enabled():

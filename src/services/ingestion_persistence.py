@@ -17,7 +17,7 @@ from src.schemas.artifact import IngestionRunConfig
 from src.schemas.evaluation import EvaluationReport
 from src.schemas.ingestion import IngestionResult
 from src.services.cv_store import CVIngestionStore
-from src.utils.artifact_logger import ArtifactLogger
+from src.utils.gcs_artifact_logger import build_artifact_logger
 
 
 def persist_ingestion(
@@ -35,6 +35,6 @@ def persist_ingestion(
     IngestResponse.artifact_path).
     """
     CVIngestionStore(output_dir=redacted_cv_dir).save(result.redacted_cv)
-    logger = ArtifactLogger(output_dir=artifacts_dir)
+    logger = build_artifact_logger(output_dir=str(artifacts_dir))
     artifact_path = logger.log_ingestion_run(result, evaluation=evaluation, config=config)
     return artifact_path, logger.last_run_number
