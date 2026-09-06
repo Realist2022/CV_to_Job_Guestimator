@@ -3,9 +3,15 @@
 api:
   image: cv-guestimator-api
   port: 8000
-web:
-  image: cv-guestimator-web
-  port: 5173
+# No web image any more: the UI lives in the separate portfolio-sonny
+# project, which calls this API from its own server (a Next.js route
+# handler), not from the visitor's browser.
+#
+# Whatever fronts this API in production needs these two, inherited from the
+# nginx config that used to sit in front of it (docker/nginx.conf, removed
+# with the UI). Both defaults will break real requests:
+#   max_body_size:      12m   # MAX_UPLOAD_BYTES is 10 MB; a 1 MB default rejects listings
+#   proxy_read_timeout: 600s  # a Modal cold start runs to minutes, not the usual 60s
 ollama:
   image: ollama/ollama
   port: 11434

@@ -17,6 +17,8 @@ from src.schemas.base import StrictBaseModel
 from src.schemas.pii import TextSpan
 from src.schemas.pipeline import TraceSpan, uuid7
 
+WITHHELD_SPAN_TEXT = "[withheld]"
+
 
 class RedactedCV(StrictBaseModel):
     cv_id: str = Field(
@@ -56,6 +58,37 @@ class RedactedCV(StrictBaseModel):
         if ingestion_trace_id is not None:
             kwargs["ingestion_trace_id"] = ingestion_trace_id
         return cls(**kwargs)
+
+    def for_serving(self) -> "RedactedCV":
+        """A copy of this CV safe to ship off the machine that ingested it.
+
+        `text` is redacted, but `pii_spans` holds the *detected values* —
+        the name, address and identifiers that were taken out of it (see
+        TextSpan.text). Keeping them is the point of the field locally: an
+        inventory of what the detector caught is how a redaction run gets
+        audited (see presidio_detector.py). It is also, verbatim, the PII
+        this pipeline exists to contain, so anywhere a stored CV travels
+        beyond that machine — a committed file, a Docker image layer, an
+        object-storage bucket — has to carry this copy instead.
+
+        Values are replaced rather than dropped so the copy stays honest
+        about what was removed: `len(pii_spans)` and every span's `kind`
+        still describe the redaction accurately, and a reader sees
+        "[withheld]" rather than an empty list that would claim no PII was
+        found here at all.
+
+        Note this is not by itself a guarantee the copy is clean — if the
+        detector missed a value, that value is still sitting in `text`,
+        untouched by anything here. scripts/build_serving_cv.py checks for
+        exactly that before writing.
+        """
+        return self.model_copy(
+            update={
+                "pii_spans": [
+                    TextSpan(kind=span.kind, text=WITHHELD_SPAN_TEXT) for span in self.pii_spans
+                ]
+            }
+        )
 
 
 class IngestionResult(StrictBaseModel):

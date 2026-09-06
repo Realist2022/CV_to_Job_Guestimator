@@ -17,8 +17,6 @@ from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
 from src.schemas.evaluation import EvaluationReport
 from src.services import (
     CandidateCV,
-    CVIngestionStore,
-    CVNotFoundError,
     ExtractionPipeline,
     FallbackInstructorClient,
     IngestionPipeline,
@@ -26,6 +24,8 @@ from src.services import (
     MatchingPipeline,
     PDFTextExtractionError,
     RelevanceScoringEngine,
+    ServingCVUnavailableError,
+    load_serving_cv,
 )
 from src.services.ingestion_persistence import persist_ingestion
 from src.services.pii_base import pii_run_model_config
@@ -33,7 +33,18 @@ from src.utils import ArtifactLogger
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
+# The public surface. One endpoint, one CV: a visitor supplies a job
+# listing and nothing else. Nobody uploads a CV here, so no PII detection
+# runs on the request path and this deployment never holds anyone else's
+# personal data (see load_serving_cv).
 router = APIRouter()
+
+# Everything that accepts a `candidate_cv` upload. NOT mounted by default
+# -- create_app() includes it only when ALLOW_CV_UPLOAD is set, which the
+# deployed site does not set. Kept rather than deleted because both
+# endpoints are still useful locally, and the CLI harness exercises the
+# same pipelines from tasks/*.yaml either way.
+upload_router = APIRouter()
 
 
 def _fallback_used(client: object) -> bool:
@@ -61,7 +72,7 @@ def _api_evaluation(result) -> EvaluationReport | None:
     return ThresholdEvaluator(criteria).evaluate(result)
 
 
-@router.post("/api/compare", response_model=CompareResponse)
+@upload_router.post("/api/compare", response_model=CompareResponse)
 async def compare_documents(
     job_listing: UploadFile = File(...),
     candidate_cv: UploadFile = File(...),
@@ -148,7 +159,7 @@ async def compare_documents(
     )
 
 
-@router.post("/api/ingest", response_model=IngestResponse)
+@upload_router.post("/api/ingest", response_model=IngestResponse)
 async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
     """Redact a raw CV once and persist it to CVIngestionStore. Returns a
     cv_id — pass it to /api/match to evaluate against any number of job
@@ -191,19 +202,22 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
 @router.post("/api/match", response_model=MatchResponse)
 async def match_cv(
     job_listing: UploadFile = File(...),
-    cv_id: str = Form(...),
     skills_weight: float | None = Form(None),
     work_experience_weight: float | None = Form(None),
 ) -> MatchResponse:
-    """Match a job listing against a CV previously ingested via /api/ingest.
-    No PII model is called here — the CV arrives already redacted."""
+    """Match a job listing against this deployment's one pinned CV.
+
+    The only public endpoint. A visitor uploads a job listing and nothing
+    else: the CV is fixed at build time (see load_serving_cv), so there is
+    no `cv_id` for a caller to supply and no CV upload to accept. That is
+    the whole lock-down -- no PII detector runs here, no visitor's personal
+    data is ever received, and nothing in the request can select a
+    different document to serve.
+    """
     try:
         scoring_engine = _scoring_engine(skills_weight, work_experience_weight)
         listing = await _load_document(job_listing, JobListing, "job listing")
-        try:
-            redacted_cv = CVIngestionStore().load(cv_id)
-        except CVNotFoundError as exc:
-            raise ValueError(str(exc)) from exc
+        redacted_cv = load_serving_cv()
 
         eval_client = client_for_role("evaluation")
         pipeline = MatchingPipeline(eval_client, scoring_engine=scoring_engine)
@@ -219,9 +233,9 @@ async def match_cv(
                 name=load_pipeline_model_names()["evaluation"],
                 fallback_used=_fallback_used(eval_client),
             ),
-            # No PII detector runs for /api/match at all — the CV arrived
-            # pre-redacted from a prior /api/ingest call — so this reports
-            # the engine that actually produced that earlier redaction,
+            # No PII detector runs for /api/match at all — the CV was
+            # redacted offline, long before this process started — so this
+            # reports the engine that actually produced that redaction,
             # flagged ran_this_run=False to say exactly that.
             pii_model=pii_run_model_config(redacted_cv.pii_engine, ran_this_run=False),
             prompt_versions=MATCHING_PROMPT_VERSIONS,
@@ -230,6 +244,11 @@ async def match_cv(
         artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
             result, evaluation=evaluation, config=run_config
         )
+    except ServingCVUnavailableError as exc:
+        # This deployment has no CV to serve — every request will fail the
+        # same way until the file is rebuilt. 503, not the 400 below: the
+        # visitor's job listing was fine, and nothing they change will help.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

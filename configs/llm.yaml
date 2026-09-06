@@ -38,3 +38,29 @@ models:
     base_url: http://localhost:11434/v1
     api_key: ollama
     temperature: 0.0
+
+  # The same fine-tuned LoRA as `cv-guestimator` above, served from Modal by
+  # modal_app/inference.py instead of from local Ollama. Identical weights, so
+  # a run against this and a run against the default are comparing hardware and
+  # serving stack, not models.
+  #
+  # base_url_env rather than a literal: the endpoint is per-Modal-workspace
+  # (https://<workspace>--cv-guestimator-serve.modal.run/v1), so it is not a
+  # value that can be written into a config shared between developers. Deploy,
+  # then put the printed URL in .env as MODAL_INFERENCE_URL along with
+  # MODAL_API_KEY -- the same value as the cv-guestimator-api-key Modal secret,
+  # which is what vLLM's --api-key checks as a bearer token.
+  #
+  # NOTE: a Modal cold start is minutes, not seconds, so the first run after a
+  # scaledown will blow configs/pipeline.yaml's max_execution_seconds: 60. Warm
+  # the endpoint first (`uv run modal run modal_app/inference.py`), or run this
+  # from a task that raises or nulls that criterion.
+  cv-guestimator-modal:
+    provider: openai_compatible
+    # vLLM's LORA_NAME in modal_app/inference.py. Use llama-3.2-3b-base instead
+    # to hit the stock base model on the same endpoint and hardware -- the A/B
+    # of the fine-tune against what it was trained from.
+    model: cv-guestimator
+    base_url_env: MODAL_INFERENCE_URL
+    api_key_env: MODAL_API_KEY
+    temperature: 0.0

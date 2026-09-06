@@ -10,13 +10,26 @@ fresher redaction if the PII policy changed since the last ingest.
 
 import os
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 from src.schemas.ingestion import RedactedCV
 
+SERVING_CV_PATH = Path(__file__).resolve().parents[2] / "serving" / "redacted_cv.json"
+
 
 class CVNotFoundError(KeyError):
     """Raised by load() when no RedactedCV has been stored for a cv_id."""
+
+
+class ServingCVUnavailableError(RuntimeError):
+    """Raised when the deployment's pinned CV is missing or unreadable.
+
+    Deliberately not CVNotFoundError: that one means "the caller asked for
+    a cv_id nobody ingested", a bad request. This means the deployment
+    itself has no CV to serve — every request will fail identically until
+    someone rebuilds the file. A 400 would blame the visitor for it.
+    """
 
 
 class CVIngestionStore:
@@ -54,3 +67,28 @@ class CVIngestionStore:
 
     def _path_for(self, cv_id: str) -> Path:
         return self.output_dir / f"{cv_id}.json"
+
+
+@lru_cache(maxsize=1)
+def load_serving_cv(path: Path | None = None) -> RedactedCV:
+    """The one CV this deployment matches every job listing against.
+
+    A build input, not runtime state: produced offline by
+    scripts/build_serving_cv.py, committed, and copied into the image (see
+    docker/Dockerfile.api). Nothing at request time writes it, and no
+    visitor chooses it — which is what keeps the public API free of both
+    CV uploads and a caller-supplied cv_id.
+
+    Cached for the process lifetime because it never changes between
+    deploys; call `load_serving_cv.cache_clear()` in tests that swap it.
+    """
+    source = SERVING_CV_PATH if path is None else Path(path)
+    if not source.exists():
+        raise ServingCVUnavailableError(
+            f"No serving CV at {source}. Build one with "
+            "`python scripts/build_serving_cv.py <cv_id>`."
+        )
+    try:
+        return RedactedCV.model_validate_json(source.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ServingCVUnavailableError(f"Serving CV at {source} is unreadable: {exc}") from exc

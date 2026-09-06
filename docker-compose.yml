@@ -7,22 +7,25 @@ services:
     environment:
       - PII_MODEL_BASE_URL=http://ollama:11434/v1
       - MODEL_BASE_URL=${MODEL_BASE_URL:-http://ollama:11434/v1}
+      # Uncomment to mount /api/compare and /api/ingest, which accept a
+      # candidate_cv upload. Off by default and NOT to be set on the public
+      # deployment: this site matches against one pinned CV (see
+      # serving/redacted_cv.json), and has no reason to receive, redact or
+      # store a visitor's personal data.
+      # - ALLOW_CV_UPLOAD=1
     volumes:
       - ./artifacts:/app/artifacts
+      # Only written when ALLOW_CV_UPLOAD is on: /api/ingest saves a
+      # RedactedCV here keyed by cv_id (see CVIngestionStore). Unmounted,
+      # that store is container-local, so anything it wrote is gone on the
+      # next restart or rebuild. Harmless while uploads are disabled -- the
+      # pinned CV comes from serving/, baked into the image.
+      - ./redacted_cvs:/app/redacted_cvs
       - ./dataSet:/app/dataSet
     ports:
       - "8000:8000"
     depends_on:
       - ollama
-
-  web:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.web
-    ports:
-      - "5173:80"
-    depends_on:
-      - api
 
   ollama:
     image: ollama/ollama
