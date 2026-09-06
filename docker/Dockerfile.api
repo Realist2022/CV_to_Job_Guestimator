@@ -10,8 +10,11 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src/ src/
 COPY configs/ configs/
+# The one CV the deployed site matches against, with every detected PII
+# value withheld (see scripts/build_serving_cv.py). Build fails without it
+# rather than shipping a site that has no CV to compare anything to.
+COPY serving/ serving/
 COPY tasks/ tasks/
-COPY web/index.html web/index.html
 COPY main.py ./
 
 ENV PATH="/app/.venv/bin:$PATH"

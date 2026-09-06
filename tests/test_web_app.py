@@ -1,13 +1,36 @@
-from pathlib import Path
-
+import pytest
 from fastapi.testclient import TestClient
 
+from src.api.app import create_app, cv_upload_enabled
 from src.api.routes import _api_evaluation
-from src.schemas.ingestion import IngestionResult, RedactedCV
+from src.schemas.ingestion import WITHHELD_SPAN_TEXT, IngestionResult, RedactedCV
 from src.schemas.pii import TextSpan
-from src.services.cv_store import CVNotFoundError
+from src.services.cv_store import CVNotFoundError, ServingCVUnavailableError
 from src.web_app import app
 from tests.factories import build_pipeline_result
+
+
+def _upload_client(monkeypatch) -> TestClient:
+    """A client for an app with the CV-upload endpoints mounted.
+
+    They are off by default (see cv_upload_enabled), so a test that
+    exercises /api/compare or /api/ingest has to opt in exactly the way a
+    developer running locally does. Using the module-level `app` here would
+    quietly test 404s instead.
+    """
+    monkeypatch.setenv("ALLOW_CV_UPLOAD", "1")
+    return TestClient(create_app())
+
+
+def _serving_cv() -> RedactedCV:
+    """Stands in for serving/redacted_cv.json — span values already withheld,
+    exactly as scripts/build_serving_cv.py writes them."""
+    return RedactedCV.from_raw_text(
+        raw_text="Jane Doe\nReact developer",
+        redacted_text="[PERSON_NAME]\nReact developer",
+        pii_spans=[TextSpan(kind="person_name", text=WITHHELD_SPAN_TEXT)],
+        pii_engine="presidio:test",
+    )
 
 
 class FakePipeline:
@@ -72,7 +95,7 @@ def test_compare_endpoint_accepts_text_uploads_without_real_model_calls(monkeypa
         lambda role: FakeClient(model=f"fake-{role}"),
     )
 
-    client = TestClient(app)
+    client = _upload_client(monkeypatch)
     response = client.post(
         "/api/compare",
         files={
@@ -90,8 +113,8 @@ def test_compare_endpoint_accepts_text_uploads_without_real_model_calls(monkeypa
     assert payload["skills_evaluation"]["matched_cv_skills"] == ["React"]
 
 
-def test_compare_endpoint_rejects_unsupported_uploads():
-    client = TestClient(app)
+def test_compare_endpoint_rejects_unsupported_uploads(monkeypatch):
+    client = _upload_client(monkeypatch)
     response = client.post(
         "/api/compare",
         files={
@@ -182,7 +205,7 @@ def test_ingest_endpoint_persists_redacted_cv_and_returns_cv_id(monkeypatch):
         "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
     )
 
-    client = TestClient(app)
+    client = _upload_client(monkeypatch)
     response = client.post(
         "/api/ingest",
         files={"candidate_cv": ("cv.txt", b"Jane Doe\nReact developer", "text/plain")},
@@ -197,61 +220,120 @@ def test_ingest_endpoint_persists_redacted_cv_and_returns_cv_id(monkeypatch):
     assert "Jane Doe" not in response.text
 
 
-def test_match_endpoint_uses_previously_ingested_cv_with_no_pii_call(monkeypatch):
-    monkeypatch.setattr("src.api.routes.IngestionPipeline", FakeIngestionPipeline)
-    # /api/match's own CVIngestionStore().load(cv_id)/ArtifactLogger().log_run
-    # live in routes.py, but /api/ingest's save happens through
-    # src.services.ingestion_persistence.persist_ingestion — both need
-    # patching to the same FakeCVIngestionStore so the two calls share state.
-    monkeypatch.setattr("src.api.routes.CVIngestionStore", FakeCVIngestionStore)
-    monkeypatch.setattr("src.services.ingestion_persistence.CVIngestionStore", FakeCVIngestionStore)
-    monkeypatch.setattr("src.services.ingestion_persistence.ArtifactLogger", FakeArtifactLogger)
+def _match_client(monkeypatch) -> TestClient:
     monkeypatch.setattr("src.api.routes.MatchingPipeline", FakeMatchingPipeline)
     monkeypatch.setattr("src.api.routes.ArtifactLogger", FakeArtifactLogger)
+    monkeypatch.setattr("src.api.routes.load_serving_cv", _serving_cv)
     monkeypatch.setattr(
         "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
     )
+    return TestClient(app)
 
-    client = TestClient(app)
-    ingest_response = client.post(
-        "/api/ingest",
-        files={"candidate_cv": ("cv.txt", b"Jane Doe\nReact developer", "text/plain")},
-    )
-    cv_id = ingest_response.json()["cv_id"]
 
-    match_response = client.post(
+def test_match_endpoint_uses_the_pinned_cv_with_no_pii_call(monkeypatch):
+    client = _match_client(monkeypatch)
+
+    response = client.post(
         "/api/match",
-        files={"job_listing": ("job.txt", b"Requirements\nReact", "text/plain")},
-        data={"cv_id": cv_id},
+        files={"job_listing": ("job.txt", b"Requirements React", "text/plain")},
     )
 
-    assert match_response.status_code == 200
-    payload = match_response.json()
+    assert response.status_code == 200
+    payload = response.json()
     assert payload["artifact_path"] == "artifacts/run-test.json"
     assert payload["skills_evaluation"]["matched_cv_skills"] == ["React"]
 
 
-def test_match_endpoint_rejects_unknown_cv_id(monkeypatch):
-    monkeypatch.setattr("src.api.routes.CVIngestionStore", FakeCVIngestionStore)
+def test_match_endpoint_needs_only_a_job_listing(monkeypatch):
+    """The lock-down in one assertion: a visitor sends a job listing and
+    nothing else, and gets a full result. No CV, no cv_id, no PII."""
+    client = _match_client(monkeypatch)
+
+    response = client.post(
+        "/api/match",
+        files={"job_listing": ("job.txt", b"Requirements React", "text/plain")},
+    )
+
+    assert response.status_code == 200
+
+
+def test_match_endpoint_ignores_a_caller_supplied_cv_id(monkeypatch):
+    """cv_id is gone from the signature, so sending one selects nothing.
+
+    Worth asserting rather than assuming: the danger of dropping a
+    parameter is that FastAPI silently ignores the extra form field and a
+    caller keeps believing it still steers which CV gets served. It does
+    not — the pinned CV is used regardless.
+    """
+    served: list = []
+
+    class RecordingMatchingPipeline(FakeMatchingPipeline):
+        def run(self, listing, redacted_cv, *, verbose=True):
+            served.append(redacted_cv)
+            return super().run(listing, redacted_cv, verbose=verbose)
+
+    client = _match_client(monkeypatch)
+    monkeypatch.setattr("src.api.routes.MatchingPipeline", RecordingMatchingPipeline)
+
+    response = client.post(
+        "/api/match",
+        files={"job_listing": ("job.txt", b"Requirements React", "text/plain")},
+        data={"cv_id": "some-other-persons-cv"},
+    )
+
+    assert response.status_code == 200
+    assert [cv.cv_id for cv in served] == [_serving_cv().cv_id]
+
+
+def test_match_endpoint_reports_503_when_the_pinned_cv_is_missing(monkeypatch):
+    """A deployment fault, not a bad request: the visitor's listing was
+    fine and no change on their side would help."""
+
+    def _unavailable():
+        raise ServingCVUnavailableError("No serving CV at serving/redacted_cv.json.")
+
+    monkeypatch.setattr("src.api.routes.load_serving_cv", _unavailable)
     monkeypatch.setattr(
         "src.api.routes.client_for_role", lambda role: FakeClient(model=f"fake-{role}")
     )
 
-    client = TestClient(app)
-    response = client.post(
+    response = TestClient(app).post(
         "/api/match",
-        files={"job_listing": ("job.txt", b"Requirements\nReact", "text/plain")},
-        data={"cv_id": "never-ingested"},
+        files={"job_listing": ("job.txt", b"Requirements React", "text/plain")},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 503
+    assert "serving" in response.json()["detail"].lower()
 
 
-def test_web_ui_renders_requirement_skill_names():
-    static_html = Path("web/index.html").read_text(encoding="utf-8")
+def test_cv_upload_endpoints_are_absent_unless_explicitly_enabled(monkeypatch):
+    """The public deployment must not expose anything that takes a CV.
 
-    assert "requirement.skill_name" in static_html
-    assert "requirement.capability" not in static_html
+    Asserted against the module-level `app` — built with ALLOW_CV_UPLOAD
+    unset, exactly as the container builds it — so this fails if the
+    default posture ever flips.
+    """
+    monkeypatch.delenv("ALLOW_CV_UPLOAD", raising=False)
+    client = TestClient(create_app())
+
+    for path in ("/api/compare", "/api/ingest"):
+        response = client.post(
+            path,
+            files={"candidate_cv": ("cv.txt", b"Jane Doe", "text/plain")},
+        )
+        assert response.status_code == 404, f"{path} is reachable with uploads disabled"
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "maybe", "TRUE-ish"])
+def test_cv_upload_stays_off_for_anything_but_an_explicit_opt_in(monkeypatch, value):
+    monkeypatch.setenv("ALLOW_CV_UPLOAD", value)
+    assert not cv_upload_enabled()
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " on "])
+def test_cv_upload_opt_in_accepts_the_documented_values(monkeypatch, value):
+    monkeypatch.setenv("ALLOW_CV_UPLOAD", value)
+    assert cv_upload_enabled()
 
 
 def _ingestion_result(span_count: int = 1) -> IngestionResult:
@@ -297,3 +379,4 @@ def test_api_evaluation_drops_criteria_the_result_shape_cannot_answer(monkeypatc
     assert report is not None
     assert [check.name for check in report.checks] == ["min_pii_spans"]
     assert report.passed
+

@@ -116,7 +116,6 @@ The web UI wraps the same pipelines with a drag-and-drop upload page and `/api/c
 | `src/api/routes.py` | Implements the `/api/compare`, `/api/ingest`, and `/api/match` endpoints. |
 | `src/api/schemas.py` | Typed response models for the API. |
 | `src/web_app.py` | Backwards-compatible shim re-exporting the app from `src/api/app.py`. |
-| `web/index.html` | Browser UI for uploading a job listing and CV, running comparison, and viewing results. |
 
 ## Harness Tasks and Configs
 
@@ -411,12 +410,11 @@ There is no task to layer on top, so an endpoint applies the baseline alone — 
 
 ## Docker
 
-The repository ships with a three-service Docker setup:
+The repository ships with a two-service Docker setup:
 
 | Service | Image | Purpose |
 | --- | --- | --- |
 | `api` | `docker/Dockerfile.api` | FastAPI backend served by uvicorn on port 8000. |
-| `web` | `docker/Dockerfile.web` | Vite-built UI served by nginx on port 5173, proxying `/api` to the backend. |
 | `ollama` | `ollama/ollama` | Local model server with a named volume for model storage. |
 
 Run everything with:
@@ -485,8 +483,7 @@ The repository is configured to ignore:
 | `tests/` | yes | Pytest suite plus `factories.py`, the shared test doubles. |
 | `scripts/` | yes | Developer utilities that are not part of the runtime (schema generation, training-data building). |
 | `training_data/` | partly | `examples/` (curated, committed input pairs) and the generated `dataset.jsonl` (gitignored). |
-| `web/` | yes | The browser UI — a static `index.html` plus a Vite project shell. |
-| `docker/` | yes | Dockerfiles, nginx config, and the Ollama `Modelfile` for the fine-tuned build. |
+| `docker/` | yes | The API Dockerfile and the Ollama `Modelfile` for the fine-tuned build. |
 | `.github/workflows/` | yes | CI: `ruff check` + `pytest` on every pull request. |
 | `dataSet/` | **no** | Your private local CVs and job listings. Ignored because it holds real personal data. |
 | `artifacts/` | **no** | Generated run traces, one numbered JSON per run. Ignored — they embed extracted CV/job content. |
@@ -567,16 +564,9 @@ The repository is configured to ignore:
 |   |   `-- artifact_logger.py    #   serializes a run to artifacts/run-NNNNNN_*.json
 |   |
 |   `-- api/                      # LAYER: HTTP, wrapping the same pipelines
-|       |-- app.py                #   FastAPI app, serves web/index.html
+|       |-- app.py                #   FastAPI app factory (/api/match; uploads opt-in)
 |       |-- routes.py             #   /api/compare, /api/ingest, /api/match
 |       `-- schemas.py            #   typed API response models
-|
-|-- web/
-|   |-- index.html                # the actual UI: drag-and-drop upload + results
-|   |-- package.json
-|   |-- vite.config.ts
-|   |-- public/
-|   `-- src/
 |
 |-- scripts/
 |   |-- gen_task_schema.py        # regenerates .vscode/task.schema.json from TaskSpec
@@ -589,8 +579,6 @@ The repository is configured to ignore:
 |
 |-- docker/
 |   |-- Dockerfile.api            # uvicorn backend on :8000
-|   |-- Dockerfile.web            # Vite build served by nginx on :5173
-|   |-- nginx.conf                # proxies /api to the backend
 |   `-- ollama/
 |       |-- Modelfile             # serving config for the fine-tuned build
 |       `-- cv-guestimator.gguf   # your exported weights (gitignored)

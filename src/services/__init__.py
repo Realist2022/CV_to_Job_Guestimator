@@ -3,7 +3,12 @@ from .agents import (
     OverallExperienceAgent,
     SkillMatcherAgent,
 )
-from .cv_store import CVIngestionStore, CVNotFoundError
+from .cv_store import (
+    CVIngestionStore,
+    CVNotFoundError,
+    ServingCVUnavailableError,
+    load_serving_cv,
+)
 from .document_parser import CandidateCV, JobListing, PDFTextExtractionError
 from .extraction_pipeline import ExtractionPipeline
 from .ingestion_pipeline import IngestionPipeline
@@ -22,6 +27,8 @@ __all__ = [
     "OverallExperienceAgent",
     "CVIngestionStore",
     "CVNotFoundError",
+    "ServingCVUnavailableError",
+    "load_serving_cv",
     "ExtractionPipeline",
     "IngestionPipeline",
     "MatchingPipeline",
