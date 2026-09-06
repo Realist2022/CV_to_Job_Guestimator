@@ -25,25 +25,44 @@ def client_for_role(role: str) -> CompletionClient:
     return FallbackInstructorClient(primary, fallback)
 
 
+def _resolve_with_env(config: dict, key: str) -> str | None:
+    """Pop `key` from a model config, falling back to the env var named by `<key>_env`.
+
+    Both `api_key`/`api_key_env` and `base_url`/`base_url_env` work this way,
+    so a config can name a value inline where it is harmless to commit (an
+    Ollama URL on localhost) and name an environment variable where it is not
+    — a secret, or a per-workspace endpoint like the Modal deployment, which
+    differs between developers and so cannot be written into a shared config
+    at all.
+
+    A literal wins over the env var when both are given. A `<key>_env` naming
+    an unset variable raises rather than returning None: it was written down
+    precisely because the value is needed, and letting it through surfaces
+    later as a 401 or a connection refused against a provider default, well
+    away from the config that actually caused it.
+    """
+    value = config.pop(key, None)
+    env_name = config.pop(f"{key}_env", None)
+    if value is not None or not env_name:
+        return value
+    value = os.getenv(env_name)
+    if not value:
+        raise ValueError(
+            f"Environment variable '{env_name}' is not set but is required "
+            f"by the model config's {key}_env."
+        )
+    return value
+
+
 def client_from_config(config: dict) -> InstructorClient:
     config = dict(config)
     provider_name = config.pop("provider", "openai_compatible")
 
-    api_key = config.pop("api_key", None)
-    api_key_env = config.pop("api_key_env", None)
-    if api_key is None and api_key_env:
-        api_key = os.getenv(api_key_env)
-        if not api_key:
-            raise ValueError(
-                f"Environment variable '{api_key_env}' is not set but is "
-                "required by the model config."
-            )
-
     provider_class = get_provider_class(provider_name)
     provider = provider_class(
         model=config.pop("model"),
-        base_url=config.pop("base_url", None),
-        api_key=api_key,
+        base_url=_resolve_with_env(config, "base_url"),
+        api_key=_resolve_with_env(config, "api_key"),
         temperature=config.pop("temperature", None),
     )
     if config:

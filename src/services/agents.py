@@ -2,7 +2,7 @@ import json
 import re
 from typing import List, Optional, Type
 
-from pydantic import create_model, model_validator
+from pydantic import model_validator
 
 from src.prompts.templates import (
     JOB_REQUIREMENTS_SYSTEM_PROMPT,
@@ -124,25 +124,19 @@ def _constrained_evaluation_model(
 ) -> Type[SkillEvaluationDecision]:
     expected_ids = set(range(len(job_requirements)))
 
-    def validate_requirements_coverage(self: SkillEvaluationDecision):
-        received_ids = [evaluation.requirement_id for evaluation in self.evaluations]
-        if len(received_ids) != len(set(received_ids)):
-            raise ValueError("Evaluation contained duplicate requirement IDs")
-        if set(received_ids) != expected_ids:
-            raise ValueError(
-                f"Evaluation must contain exactly these requirement IDs: {sorted(expected_ids)}"
-            )
-        return self
+    class ConstrainedSkillEvaluationDecision(SkillEvaluationDecision):
+        @model_validator(mode="after")
+        def validate_requirements_coverage(self):
+            received_ids = [e.requirement_id for e in self.evaluations]
+            if len(received_ids) != len(set(received_ids)):
+                raise ValueError("Evaluation contained duplicate requirement IDs")
+            if set(received_ids) != expected_ids:
+                raise ValueError(
+                    f"Evaluation must contain exactly these requirement IDs: {sorted(expected_ids)}"
+                )
+            return self
 
-    return create_model(
-        "ConstrainedSkillEvaluationDecision",
-        __base__=SkillEvaluationDecision,
-        __validators__={
-            "validate_requirements_coverage": model_validator(mode="after")(
-                validate_requirements_coverage
-            )
-        },
-    )
+    return ConstrainedSkillEvaluationDecision
 
 
 class JobRequirementsAgent:
