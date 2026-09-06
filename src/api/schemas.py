@@ -60,3 +60,15 @@ class MatchResponse(BaseModel):
     # None when no criteria are configured (or none apply to this result
     # shape) -- an absent verdict, not a failed one.
     evaluation: EvaluationReport | None = None
+
+
+class WarmResponse(BaseModel):
+    """Acknowledgement that a wake-up was kicked off, not that it finished.
+
+    Returned immediately: the point of warming is to overlap the model
+    backend's cold start with the time a visitor spends choosing a file, so
+    blocking the caller for the ~90s boot would defeat it entirely.
+    """
+
+    warming: bool
+    detail: str

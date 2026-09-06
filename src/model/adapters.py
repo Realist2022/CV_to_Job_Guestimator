@@ -54,6 +54,24 @@ def _resolve_with_env(config: dict, key: str) -> str | None:
     return value
 
 
+def endpoint_for_role(role: str) -> tuple[str | None, str | None]:
+    """The (base_url, api_key) a role's PRIMARY model is served from.
+
+    For waking a scale-to-zero backend without spending tokens on it: the
+    warm endpoint pings `<base_url>/models`, which boots the Modal container
+    exactly as a real completion would but returns a short list instead of
+    running the GPU. Deliberately ignores any configured fallback -- warming
+    a hosted API like Gemini is pointless, since it was never cold.
+
+    Returns (None, ...) for a provider with no base_url configured.
+    """
+    config = dict(load_model_config(load_pipeline_model_names()[role]))
+    config.pop("provider", None)
+    config.pop("model", None)
+    config.pop("temperature", None)
+    return _resolve_with_env(config, "base_url"), _resolve_with_env(config, "api_key")
+
+
 def client_from_config(config: dict) -> InstructorClient:
     config = dict(config)
     provider_name = config.pop("provider", "openai_compatible")

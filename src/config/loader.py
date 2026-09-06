@@ -1,6 +1,7 @@
 """Shared accessors for YAML-backed project configuration."""
 
 import math
+import os
 from pathlib import Path
 
 import yaml
@@ -48,14 +49,30 @@ def load_model_config(name: str) -> dict:
 
 
 def load_pipeline_model_names() -> dict[str, str]:
-    # Only "evaluation" is a real model role now: PII redaction runs
-    # entirely through presidio (see pii_base.py), with no LLM in the
-    # loop and so nothing to select a model config for.
+    """Which named configs/llm.yaml entry serves each model role.
+
+    Only "evaluation" is a real model role now: PII redaction runs entirely
+    through presidio (see pii_base.py), with no LLM in the loop and so
+    nothing to select a model config for.
+
+    MODEL_EVALUATION overrides configs/pipeline.yaml for that role. The
+    committed default is `cv-guestimator`, which points at Ollama on
+    localhost -- correct on a development machine and meaningless in a
+    container that has no Ollama beside it. Rather than commit a cloud
+    value and break local runs, or ship two config files that drift, the
+    deployment names its own: MODEL_EVALUATION=cv-guestimator-modal.
+
+    The name is still resolved through configs/llm.yaml, so an unknown one
+    fails at startup with load_model_config's "Known: ..." message rather
+    than reaching a provider.
+    """
     pipeline_config = load_yaml("pipeline.yaml")
     models = pipeline_config.get("models")
     if not isinstance(models, dict) or "evaluation" not in models:
         raise ValueError("configs/pipeline.yaml must define models.evaluation.")
-    return {"evaluation": models["evaluation"]}
+
+    override = os.getenv("MODEL_EVALUATION", "").strip()
+    return {"evaluation": override or models["evaluation"]}
 
 
 def load_pipeline_fallback_names() -> dict[str, str]:

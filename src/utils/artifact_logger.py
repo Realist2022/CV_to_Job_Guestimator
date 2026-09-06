@@ -21,14 +21,30 @@ from src.schemas.pipeline import PipelineResult
 _ArtifactT = TypeVar("_ArtifactT", bound=BaseModel)
 
 
-class ArtifactLogger:
-    _ARTIFACT_RUN_PATTERN = re.compile(r"^run-(\d+)_.*\.json$")
-    _RESERVATION_RUN_PATTERN = re.compile(r"^\.run-(\d+)\.reserve$")
+def artifact_filename(run_number: int, engine_name: str, trace_id: UUID) -> str:
+    """The on-disk / in-bucket name for one run's artifact.
 
-    def __init__(self, output_dir: str | Path = "artifacts"):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.last_run_number: int | None = None
+    Shared by every backend (see ArtifactLoggerBase) so a run logged locally
+    and the same run logged to a bucket are named identically -- the name is
+    how runs are matched up by eye and by scripts/compare_runs.py, so it is
+    part of the format rather than one writer's implementation detail.
+    """
+    safe_engine_name = re.sub(r"[^A-Za-z0-9._-]+", "_", engine_name).strip("._") or "unknown-engine"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    # trace_id is a time-ordered UUIDv7, so its leading hex digits are
+    # mostly timestamp and don't add much filename entropy; the tail is
+    # its random portion, so use that for a short unique-looking suffix.
+    return f"run-{run_number:06d}_{safe_engine_name}_{timestamp}_{str(trace_id)[-8:]}.json"
+
+
+class ArtifactLoggerBase:
+    """What every artifact backend does, minus where the bytes land.
+
+    log_run/log_ingestion_run are identical across backends and defined once
+    here: routes.py swaps between a local writer and a bucket writer
+    depending on the deployment, so the two must not be able to drift into
+    logging different things.
+    """
 
     def log_run(
         self,
@@ -57,6 +73,24 @@ class ArtifactLogger:
             engine_name=result.pii_engine,
             trace_id=result.trace_id,
         )
+
+    def _log(
+        self,
+        build: Callable[[int], _ArtifactT],
+        engine_name: str,
+        trace_id: UUID,
+    ) -> str:
+        raise NotImplementedError
+
+
+class ArtifactLogger(ArtifactLoggerBase):
+    _ARTIFACT_RUN_PATTERN = re.compile(r"^run-(\d+)_.*\.json$")
+    _RESERVATION_RUN_PATTERN = re.compile(r"^\.run-(\d+)\.reserve$")
+
+    def __init__(self, output_dir: str | Path = "artifacts"):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.last_run_number: int | None = None
 
     def _log(
         self,
@@ -108,14 +142,7 @@ class ArtifactLogger:
         engine_name: str,
         trace_id: UUID,
     ) -> str:
-        safe_engine_name = re.sub(r"[^A-Za-z0-9._-]+", "_", engine_name).strip("._") or "unknown-engine"
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-        # trace_id is a time-ordered UUIDv7, so its leading hex digits are
-        # mostly timestamp and don't add much filename entropy; the tail is
-        # its random portion, so use that for a short unique-looking suffix.
-        filename = (
-            f"run-{run_number:06d}_{safe_engine_name}_" f"{timestamp}_{str(trace_id)[-8:]}.json"
-        )
+        filename = artifact_filename(run_number, engine_name, trace_id)
         out_path = self.output_dir / filename
         temporary_path: Path | None = None
 

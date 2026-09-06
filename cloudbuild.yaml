@@ -1,0 +1,25 @@
+# Cloud Build config for the Cloud Run image.
+#
+# Exists because `gcloud run deploy --source .` only auto-detects a Dockerfile
+# at the repository root, and this project's lives at docker/Dockerfile.api
+# alongside the other deployment files. Without this, that command silently
+# falls back to buildpacks and builds something quite different from what
+# docker-compose builds locally.
+#
+# What gets uploaded here is governed by .gcloudignore -- which excludes
+# dataSet/, redacted_cvs/ and artifacts/, all of which hold real personal
+# data. Do not remove that file.
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=docker/Dockerfile.api
+      - --tag=${_IMAGE}
+      - .
+
+images:
+  - ${_IMAGE}
+
+options:
+  logging: CLOUD_LOGGING_ONLY

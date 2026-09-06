@@ -1,9 +1,12 @@
+import logging
 import tempfile
+import urllib.request
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
-from src.api.schemas import CompareResponse, IngestResponse, MatchResponse
+from src.api.auth import require_api_key
+from src.api.schemas import CompareResponse, IngestResponse, MatchResponse, WarmResponse
 from src.config import (
     load_default_evaluation_criteria,
     load_pii_detector_names,
@@ -11,7 +14,7 @@ from src.config import (
     load_scoring_weights,
 )
 from src.harness.evaluator import ThresholdEvaluator, resolve_criteria
-from src.model.adapters import client_for_role
+from src.model.adapters import client_for_role, endpoint_for_role
 from src.prompts.templates import EXTRACTION_PROMPT_VERSIONS, MATCHING_PROMPT_VERSIONS
 from src.schemas.artifact import IngestionRunConfig, RunConfig, RunModelConfig
 from src.schemas.evaluation import EvaluationReport
@@ -29,22 +32,28 @@ from src.services import (
 )
 from src.services.ingestion_persistence import persist_ingestion
 from src.services.pii_base import pii_run_model_config
-from src.utils import ArtifactLogger
+from src.utils.gcs_artifact_logger import build_artifact_logger
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+# Generous: a Modal cold start is minutes, and the container only keeps
+# booting while a request is in flight.
+WARM_TIMEOUT_SECONDS = 300
+
+logger = logging.getLogger(__name__)
 
 # The public surface. One endpoint, one CV: a visitor supplies a job
 # listing and nothing else. Nobody uploads a CV here, so no PII detection
 # runs on the request path and this deployment never holds anyone else's
 # personal data (see load_serving_cv).
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_key)])
 
 # Everything that accepts a `candidate_cv` upload. NOT mounted by default
 # -- create_app() includes it only when ALLOW_CV_UPLOAD is set, which the
 # deployed site does not set. Kept rather than deleted because both
 # endpoints are still useful locally, and the CLI harness exercises the
 # same pipelines from tasks/*.yaml either way.
-upload_router = APIRouter()
+upload_router = APIRouter(dependencies=[Depends(require_api_key)])
 
 
 def _fallback_used(client: object) -> bool:
@@ -134,7 +143,7 @@ async def compare_documents(
             prompt_versions=EXTRACTION_PROMPT_VERSIONS,
         )
         evaluation = _api_evaluation(result)
-        artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
+        artifact_path = build_artifact_logger().log_run(
             result, evaluation=evaluation, config=run_config
         )
     except (PDFTextExtractionError, ValueError) as exc:
@@ -199,6 +208,61 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
     )
 
 
+def _wake_model_backend() -> None:
+    """Ping the model endpoint so a scale-to-zero GPU starts booting.
+
+    Runs after the response is sent (see warm_model), so nothing here may
+    raise into a request. A warm-up that fails is a missed optimisation,
+    never an error the visitor should see -- the match itself will simply
+    pay the cold start it would have paid anyway.
+
+    Hits `<base_url>/models` rather than running a completion: on vLLM that
+    returns the served model list without touching the GPU, while still
+    being enough of a request to make Modal start the container.
+    """
+    try:
+        base_url, api_key = endpoint_for_role("evaluation")
+    except Exception as exc:  # unset env var, unknown model name, ...
+        logger.warning("Warm-up skipped, could not resolve the model endpoint: %s", exc)
+        return
+
+    if not base_url:
+        logger.info("Warm-up skipped: the configured model has no base_url to reach.")
+        return
+
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    request = urllib.request.Request(f"{base_url.rstrip('/')}/models", headers=headers)
+    try:
+        # Long enough to cover a real cold start, since the container only
+        # keeps booting while a request is in flight -- hanging up early can
+        # leave it half-started.
+        with urllib.request.urlopen(request, timeout=WARM_TIMEOUT_SECONDS) as response:
+            logger.info("Warm-up finished with HTTP %s", response.status)
+    except Exception as exc:
+        logger.info("Warm-up did not complete (this is not fatal): %s", exc)
+
+
+@router.post("/api/warm", response_model=WarmResponse, status_code=202)
+async def warm_model(background_tasks: BackgroundTasks) -> WarmResponse:
+    """Start waking the model backend, and return without waiting for it.
+
+    The model runs on a GPU that scales to zero, so the first request after
+    a quiet spell pays ~90s of boot time -- which lands entirely on the
+    first step of a run and is most of what makes a cold match feel broken.
+
+    A visitor spends time reading the dialog and picking a file before they
+    submit anything. Calling this when that dialog opens spends the boot
+    during those seconds instead of after the submit. It costs nothing
+    extra: it is the same wake-up the match would have triggered, moved
+    earlier.
+
+    202, and returns immediately: the caller must not wait on this, and a
+    failure to warm is deliberately not an error.
+    """
+    background_tasks.add_task(_wake_model_backend)
+    return WarmResponse(warming=True, detail="Waking the model backend.")
+
+
 @router.post("/api/match", response_model=MatchResponse)
 async def match_cv(
     job_listing: UploadFile = File(...),
@@ -220,7 +284,16 @@ async def match_cv(
         redacted_cv = load_serving_cv()
 
         eval_client = client_for_role("evaluation")
-        pipeline = MatchingPipeline(eval_client, scoring_engine=scoring_engine)
+        # A second, independent client so the overall-experience step can run
+        # concurrently with requirements+matching (see MatchingPipeline). It
+        # has to be its own instance: InstructorClient is not concurrency-safe,
+        # and sharing one would corrupt the `attempts` recorded in artifacts.
+        experience_client = client_for_role("evaluation")
+        pipeline = MatchingPipeline(
+            eval_client,
+            scoring_engine=scoring_engine,
+            experience_client=experience_client,
+        )
         result = pipeline.run(listing, redacted_cv, verbose=False)
 
         run_config = RunConfig(
@@ -231,7 +304,11 @@ async def match_cv(
             evaluation_model=RunModelConfig.from_client(
                 eval_client,
                 name=load_pipeline_model_names()["evaluation"],
-                fallback_used=_fallback_used(eval_client),
+                # Either client can fall back independently now that they run
+                # in parallel. OR-ing them means a run where only the
+                # experience step fell back still says so, rather than
+                # reporting a clean primary-only run that never happened.
+                fallback_used=_fallback_used(eval_client) or _fallback_used(experience_client),
             ),
             # No PII detector runs for /api/match at all — the CV was
             # redacted offline, long before this process started — so this
@@ -241,7 +318,7 @@ async def match_cv(
             prompt_versions=MATCHING_PROMPT_VERSIONS,
         )
         evaluation = _api_evaluation(result)
-        artifact_path = ArtifactLogger(output_dir="artifacts").log_run(
+        artifact_path = build_artifact_logger().log_run(
             result, evaluation=evaluation, config=run_config
         )
     except ServingCVUnavailableError as exc:
