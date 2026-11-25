@@ -46,16 +46,27 @@ class InstructorClient:
         base_url: str,
         api_key: str,
         temperature: float | None = None,
+        max_tokens: int | None = None,
+        request_timeout_seconds: float | None = None,
+        http_max_retries: int | None = None,
     ):
         self.model = model
         self.temperature = 0.0 if temperature is None else temperature
+        # None leaves each at the server/SDK default (see configs/llm.yaml's
+        # cv-guestimator-modal entry for why a backend would set them).
+        self.max_tokens = max_tokens
         # Set by complete() after each call: how many attempts instructor
         # actually made (1 = succeeded first try, >1 = it retried after a
         # validation failure). None until the first call completes.
         self.last_attempts: int | None = None
         # Wrap standard OpenAI client with Instructor
+        openai_kwargs: dict[str, Any] = {}
+        if request_timeout_seconds is not None:
+            openai_kwargs["timeout"] = request_timeout_seconds
+        if http_max_retries is not None:
+            openai_kwargs["max_retries"] = http_max_retries
         self.client = instructor.from_openai(
-            OpenAI(base_url=base_url, api_key=api_key),
+            OpenAI(base_url=base_url, api_key=api_key, **openai_kwargs),
             mode=instructor.Mode.JSON,
         )
 
@@ -86,6 +97,7 @@ class InstructorClient:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=self.temperature,
+                **({"max_tokens": self.max_tokens} if self.max_tokens is not None else {}),
             )
         finally:
             self.client.off("completion:kwargs", _count_attempt)

@@ -137,7 +137,13 @@ app = modal.App("cv-guestimator")
     image=vllm_image,
     # A 3B in bf16 is ~6.4GB of weights; an L4's 24GB fits it with room for the
     # KV cache at 8192 context. Anything larger is paying for idle VRAM.
-    gpu="L4",
+    #
+    # A10G is the fallback, tried only when no L4 is free. On 2026-11-26 a
+    # request sat "scheduling" for 21 minutes waiting for an L4, so every
+    # visitor in that window hit a timeout however well the warm-up worked.
+    # The A10G is also 24GB and runs bf16, so the same flags fit unchanged; it
+    # costs a little more per hour, paid only when the L4 pool is empty.
+    gpu=["L4", "A10G"],
     # How long a container lingers after its last request. The matching pipeline
     # makes three sequential LLM calls per run, and a human comparing candidates
     # makes several runs in a row, so this has to outlast the gap between runs

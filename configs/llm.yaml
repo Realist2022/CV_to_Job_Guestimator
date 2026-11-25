@@ -64,3 +64,21 @@ models:
     base_url_env: MODAL_INFERENCE_URL
     api_key_env: MODAL_API_KEY
     temperature: 0.0
+    # Bounds on a single call, so a bad Modal moment turns into a Gemini
+    # answer (configs/pipeline.yaml fallback_models) instead of a visitor
+    # staring at a timeout. Without them the OpenAI SDK waits 600s and retries
+    # twice, so the fallback could never fire inside the portfolio's 280s.
+    #
+    # max_tokens: vLLM otherwise lets a reply run to the end of the 8192-token
+    # context. A reply that never emits a stop token then generates for
+    # minutes (one call on 2026-11-26 ran 9m3s). The structured replies the
+    # pipeline asks for are a few hundred tokens.
+    max_tokens: 2048
+    # Per HTTP request. The pipeline's critical path is two sequential calls
+    # (requirements, then matching; experience runs alongside), so 2 x 120s
+    # plus a fallback still lands inside the portfolio's 280s limit. A warm
+    # call takes well under a minute.
+    request_timeout_seconds: 120
+    # The SDK's own retries would re-wait the full timeout against a backend
+    # that just failed to answer. Fall back instead.
+    http_max_retries: 0

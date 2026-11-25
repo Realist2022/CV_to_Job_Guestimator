@@ -65,6 +65,29 @@ class ModelConfigEnvTest(unittest.TestCase):
             )
         self.assertIn("base_ur1_env", str(caught.exception))
 
+    def test_request_bounds_reach_the_openai_client_and_the_call(self):
+        # The Modal entry sets these so the Gemini fallback can fire inside
+        # the portfolio's request limit; a key that parsed but never reached
+        # the SDK would look configured while doing nothing.
+        client = client_from_config(
+            _config(
+                base_url="http://localhost:11434/v1",
+                api_key="k",
+                max_tokens=2048,
+                request_timeout_seconds=120,
+                http_max_retries=0,
+            )
+        )
+        openai_client = client.client.client
+        self.assertEqual(openai_client.timeout, 120)
+        self.assertEqual(openai_client.max_retries, 0)
+        self.assertEqual(client.max_tokens, 2048)
+
+    def test_request_bounds_default_to_the_sdk_when_unset(self):
+        client = client_from_config(_config(base_url="http://localhost:11434/v1", api_key="k"))
+        self.assertIsNone(client.max_tokens)
+        self.assertEqual(client.client.client.max_retries, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,8 +20,14 @@ class ModelProvider(ABC):
         base_url: str | None = None,
         api_key: str | None = None,
         temperature: float | None = None,
+        max_tokens: int | None = None,
+        request_timeout_seconds: float | None = None,
+        http_max_retries: int | None = None,
     ):
         self.model = model
+        self.max_tokens = max_tokens
+        self.request_timeout_seconds = request_timeout_seconds
+        self.http_max_retries = http_max_retries
         self.base_url = base_url or self.default_base_url
         self.api_key = api_key or self.default_api_key
         self.temperature = temperature
@@ -38,6 +44,9 @@ class ModelProvider(ABC):
             base_url=self.base_url,
             api_key=self.api_key,
             temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            request_timeout_seconds=self.request_timeout_seconds,
+            http_max_retries=self.http_max_retries,
         )
 
 
