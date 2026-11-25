@@ -258,6 +258,12 @@ async def warm_model(background_tasks: BackgroundTasks) -> WarmResponse:
 
     202, and returns immediately: the caller must not wait on this, and a
     failure to warm is deliberately not an error.
+
+    The wake-up runs as a background task AFTER the response is sent. On
+    Cloud Run that only works with CPU always allocated (`--no-cpu-throttling`,
+    set in scripts/deploy_cloudrun.sh). Under the default request-based
+    billing, CPU is throttled once the 202 goes out and the ping to Modal can
+    stall or never be sent, so the GPU stays cold.
     """
     background_tasks.add_task(_wake_model_backend)
     return WarmResponse(warming=True, detail="Waking the model backend.")
