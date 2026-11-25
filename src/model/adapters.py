@@ -68,7 +68,8 @@ def endpoint_for_role(role: str) -> tuple[str | None, str | None]:
     config = dict(load_model_config(load_pipeline_model_names()[role]))
     config.pop("provider", None)
     config.pop("model", None)
-    config.pop("temperature", None)
+    for key in ("temperature", "max_tokens", "request_timeout_seconds", "http_max_retries"):
+        config.pop(key, None)
     return _resolve_with_env(config, "base_url"), _resolve_with_env(config, "api_key")
 
 
@@ -82,6 +83,9 @@ def client_from_config(config: dict) -> InstructorClient:
         base_url=_resolve_with_env(config, "base_url"),
         api_key=_resolve_with_env(config, "api_key"),
         temperature=config.pop("temperature", None),
+        max_tokens=config.pop("max_tokens", None),
+        request_timeout_seconds=config.pop("request_timeout_seconds", None),
+        http_max_retries=config.pop("http_max_retries", None),
     )
     if config:
         raise ValueError(f"Unrecognised model config keys: {sorted(config)}")
