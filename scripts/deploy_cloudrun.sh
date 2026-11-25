@@ -150,10 +150,21 @@ say "Deploying ${SERVICE} to ${REGION}"
 #   in src/api/auth.py, so the portfolio (on Vercel, outside GCP) can call
 #   this without a service-account key. Cloud Run IAM would mean managing one.
 # --timeout 900 rides out a Modal cold start, which is minutes. The portfolio
-#   gives up at 180s first, so this is headroom rather than the real ceiling.
+#   gives up at 280s first, so this is headroom rather than the real ceiling.
 # --max-instances caps how much GPU spend a bad day can cause.
 # --memory 1Gi is generous: spaCy and presidio are installed but never
 #   imported on the /api/match path (uploads are off), so nothing large loads.
+# --no-cpu-throttling is what makes /api/warm work. That endpoint answers 202
+#   and only THEN pings Modal from a FastAPI background task. Under Cloud
+#   Run's default request-based billing, CPU is throttled the moment the
+#   response is sent, so that ping may never go out, or stall, and the GPU
+#   stays cold until the visitor's real match request wakes it. That puts the
+#   whole Modal cold start inside the portfolio's request timeout. With CPU
+#   always allocated, the instance keeps running the ping until it idles out
+#   (min-instances is still 0, so it still scales to zero). That costs a few
+#   cents of CPU per visit, which is far cheaper than a failed match.
+# --cpu-boost gives extra CPU during the container's own cold start, so the
+#   warm request (10s budget on the portfolio side) is answered sooner.
 gcloud run deploy "$SERVICE" \
   --image "$IMAGE" \
   --region "$REGION" \
@@ -161,6 +172,8 @@ gcloud run deploy "$SERVICE" \
   --allow-unauthenticated \
   --memory 1Gi \
   --cpu 1 \
+  --no-cpu-throttling \
+  --cpu-boost \
   --timeout 900 \
   --min-instances 0 \
   --max-instances 3 \
