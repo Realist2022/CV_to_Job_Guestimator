@@ -1,7 +1,7 @@
 from typing import Any, Protocol, Sequence, Type, runtime_checkable
 
 import instructor
-from instructor.core import InstructorRetryException
+from instructor.core import IncompleteOutputException, InstructorRetryException
 from openai import APIError, OpenAI
 from pydantic import BaseModel
 
@@ -127,12 +127,21 @@ class FallbackInstructorClient:
       `APITimeoutError`, `APIStatusError`, `RateLimitError`, ...): the
       backend itself failed — e.g. a local Ollama server that isn't
       running, or hasn't had the model `ollama pull`ed/`ollama create`d yet.
+    - `IncompleteOutputException`: the reply hit `max_tokens` before it
+      finished, so there is nothing valid to parse. With the fine-tuned model
+      this means it fell into a repetition loop (seen 2026-11-27 on a real
+      job listing). Retrying the same prompt on the same model loops again,
+      so the fallback gets a turn instead.
 
     Any other exception (a bug in our own code, a bad response_model, ...)
     is left to propagate rather than silently masked by a fallback attempt.
     """
 
-    _FAILURE_TYPES: tuple[type[BaseException], ...] = (InstructorRetryException, APIError)
+    _FAILURE_TYPES: tuple[type[BaseException], ...] = (
+        InstructorRetryException,
+        IncompleteOutputException,
+        APIError,
+    )
 
     def __init__(self, primary: CompletionClient, *fallbacks: CompletionClient):
         if not fallbacks:

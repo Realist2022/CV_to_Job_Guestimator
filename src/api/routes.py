@@ -149,6 +149,7 @@ async def compare_documents(
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Request failed with a 500")
         raise HTTPException(
             status_code=500,
             detail=f"Compare failed: {type(exc).__name__}: {exc}",
@@ -193,6 +194,7 @@ async def ingest_cv(candidate_cv: UploadFile = File(...)) -> IngestResponse:
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Request failed with a 500")
         raise HTTPException(
             status_code=500,
             detail=f"Ingest failed: {type(exc).__name__}: {exc}",
@@ -335,6 +337,7 @@ async def match_cv(
     except (PDFTextExtractionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Request failed with a 500")
         raise HTTPException(
             status_code=500,
             detail=f"Match failed: {type(exc).__name__}: {exc}",
