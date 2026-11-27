@@ -88,6 +88,59 @@ class ModelConfigEnvTest(unittest.TestCase):
         self.assertIsNone(client.max_tokens)
         self.assertEqual(client.client.client.max_retries, 2)
 
+    def test_json_schema_structured_output_sends_the_response_models_schema(self):
+        from unittest.mock import MagicMock
+
+        from pydantic import BaseModel
+
+        class Reply(BaseModel):
+            ok: bool
+
+        client = client_from_config(
+            _config(
+                base_url="http://localhost:11434/v1",
+                api_key="k",
+                structured_output="json_schema",
+            )
+        )
+        client.client.chat.completions.create = MagicMock(return_value=Reply(ok=True))
+
+        client.complete("system", "user", Reply)
+
+        kwargs = client.client.chat.completions.create.call_args.kwargs
+        self.assertEqual(
+            kwargs["extra_body"]["response_format"],
+            {
+                "type": "json_schema",
+                "json_schema": {"name": "Reply", "schema": Reply.model_json_schema()},
+            },
+        )
+
+    def test_structured_output_unset_sends_no_extra_body(self):
+        from unittest.mock import MagicMock
+
+        from pydantic import BaseModel
+
+        class Reply(BaseModel):
+            ok: bool
+
+        client = client_from_config(_config(base_url="http://localhost:11434/v1", api_key="k"))
+        client.client.chat.completions.create = MagicMock(return_value=Reply(ok=True))
+
+        client.complete("system", "user", Reply)
+
+        self.assertNotIn("extra_body", client.client.chat.completions.create.call_args.kwargs)
+
+    def test_unknown_structured_output_value_is_rejected(self):
+        with self.assertRaises(ValueError):
+            client_from_config(
+                _config(
+                    base_url="http://localhost:11434/v1",
+                    api_key="k",
+                    structured_output="regex",
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

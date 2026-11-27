@@ -82,3 +82,8 @@ models:
     # The SDK's own retries would re-wait the full timeout against a backend
     # that just failed to answer. Fall back instead.
     http_max_retries: 0
+    # Constrain decoding to each call's own response schema (vLLM's xgrammar
+    # backend, set up in modal_app/inference.py). Replies come back shorter,
+    # since no free whitespace or extra keys are allowed, and the model can no
+    # longer wander out of the shape the app parses. The prompt is unchanged.
+    structured_output: json_schema
