@@ -9,7 +9,7 @@ failed" (see its docstring for why those specific types), RecordingClient
 import unittest
 
 from httpx import Request
-from instructor.core import InstructorRetryException
+from instructor.core import IncompleteOutputException, InstructorRetryException
 from openai import APIConnectionError
 from pydantic import BaseModel
 
@@ -39,6 +39,17 @@ class FallbackInstructorClientTest(unittest.TestCase):
 
     def test_falls_back_on_connection_error(self):
         primary = FailingClient(model="primary", exc=_connection_error("ollama down"))
+        fallback = RecordingClient(model="fallback", responses={"sys": Answer(text="ok")})
+
+        client = FallbackInstructorClient(primary, fallback)
+        result = client.complete("sys", "user", Answer)
+
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(client.model, "fallback")
+        self.assertTrue(client.fallback_used)
+
+    def test_falls_back_when_the_primary_hits_max_tokens(self):
+        primary = FailingClient(model="primary", exc=IncompleteOutputException())
         fallback = RecordingClient(model="fallback", responses={"sys": Answer(text="ok")})
 
         client = FallbackInstructorClient(primary, fallback)
