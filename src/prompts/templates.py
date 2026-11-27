@@ -5,7 +5,7 @@ from typing import Final
 # produced it — independent of which model executed it (see RunConfig in
 # src/schemas/artifact.py). Leave a version untouched if its prompt didn't
 # change.
-JOB_REQUIREMENTS_PROMPT_VERSION: Final = "1.3"
+JOB_REQUIREMENTS_PROMPT_VERSION: Final = "1.4"
 SKILL_MATCHER_PROMPT_VERSION: Final = "1.2"
 OVERALL_EXPERIENCE_PROMPT_VERSION: Final = "1.4"
 
@@ -31,9 +31,25 @@ methodology, such as "modern development practices", "modern engineering practic
 "modern web applications", or "fast-paced environment" — these are not independently
 verifiable against a CV. Keep concrete, named methodologies and practices such as
 "Agile", "CI/CD", "code reviews", or "test-driven development".
-Return one skill_name per record. Split all combined requirements into separate records.
+Return one skill_name per record. Split requirements that are ALL needed (joined by
+"and" or listed as a set) into separate records.
+Do NOT split alternatives. When a requirement offers a choice, joined by "or" or ending in
+"or similar", "or equivalent" or "or related field", any one option satisfies it, so keep
+it as ONE record that names the options.
+Example: "A tertiary qualification in software engineering, computer science or similar"
+-> skill_name: "Tertiary qualification in software engineering, computer science or similar".
+Do not create separate records for "software engineering" and "computer science".
 The skill_name field must contain only the skill name, without years-of-experience wording.
 Return each unique skill_name once, grounded only in the job description.
+
+Read every section that describes the candidate, not only "Requirements" or
+"Qualifications". Sections such as "Who you are", "About you", "What you bring" or
+"You'll have" often hold the role's most important requirement. When a sentence there
+names a concrete practice, capability or experience, extract it as a skill_name.
+Example: "You're already building software with AI, and you have stories about what's
+worked" -> skill_name: "AI-assisted software development".
+Still exclude personality traits from those sections, such as "a builder", "takes
+ownership" or "picks up the ball and runs with it".
 
 When a requirement names a general category followed by a specific example marked as
 optional or preferred (in parentheses, or after "e.g."/"such as"/"including"), extract
