@@ -267,12 +267,19 @@ class VllmServer:
                 #
                 # Structured outputs: the app asks for a JSON schema per call
                 # (configs/llm.yaml `structured_output: json_schema`), and
-                # xgrammar constrains decoding to it. Forbidding free whitespace
-                # stops the pretty-printing tokens a JSON reply otherwise
-                # spends, and removes the newline loops a small model can fall
-                # into inside an otherwise valid JSON object.
+                # xgrammar constrains decoding to it.
+                #
+                # Whitespace is deliberately left free. Forbidding it
+                # (`disable_any_whitespace`) was tried on 2026-11-27 and broke
+                # the output: the LoRA learned JSON written with spaces after
+                # `:` and `,`, so with those spaces banned it lost track of
+                # where a string ended and wrote the next keys INTO the
+                # string, e.g. target_job_title =
+                # 'AI engineer","target_overall_years":null,'. It also
+                # extracted far fewer requirements. Keep decoding close to
+                # the format the model was trained on.
                 "--structured-outputs-config",
-                '{"backend": "xgrammar", "disable_any_whitespace": true}',
+                '{"backend": "xgrammar"}',
                 # Required for /sleep and /wake_up.
                 "--enable-sleep-mode",
                 # Puts /sleep, /wake_up and the other dev-mode routes behind
