@@ -49,8 +49,16 @@ class InstructorClient:
         max_tokens: int | None = None,
         request_timeout_seconds: float | None = None,
         http_max_retries: int | None = None,
+        structured_output: str | None = None,
     ):
+        if structured_output not in (None, "json_schema"):
+            raise ValueError(
+                f"structured_output must be 'json_schema' or unset, got {structured_output!r}"
+            )
         self.model = model
+        # "json_schema": ask the server to constrain decoding to the response
+        # model's own schema rather than to any JSON object. See complete().
+        self.structured_output = structured_output
         self.temperature = 0.0 if temperature is None else temperature
         # None leaves each at the server/SDK default (see configs/llm.yaml's
         # cv-guestimator-modal entry for why a backend would set them).
@@ -98,10 +106,40 @@ class InstructorClient:
                 ],
                 temperature=self.temperature,
                 **({"max_tokens": self.max_tokens} if self.max_tokens is not None else {}),
+                **self._structured_output_kwargs(response_model),
             )
         finally:
             self.client.off("completion:kwargs", _count_attempt)
             self.last_attempts = attempts
+
+    def _structured_output_kwargs(self, response_model: Type[BaseModel]) -> dict[str, Any]:
+        """Swap Instructor's `json_object` response_format for the model's schema.
+
+        Instructor's JSON mode sends `response_format: json_object` and writes
+        the schema into the system prompt. On vLLM, json_object constrains
+        decoding to *some* JSON, so a small model can still wander: extra
+        keys, long whitespace runs, or a list it never closes. A json_schema
+        response_format constrains it to exactly the fields the app parses.
+
+        Done through `extra_body` (which the OpenAI SDK merges over the request
+        body last) rather than by switching Instructor to JSON_SCHEMA mode,
+        because that mode also drops the schema from the system prompt. The
+        fine-tuned model was trained on JSON-mode prompts, so the prompt it
+        sees stays byte-for-byte what it was.
+        """
+        if self.structured_output != "json_schema":
+            return {}
+        return {
+            "extra_body": {
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_model.__name__,
+                        "schema": response_model.model_json_schema(),
+                    },
+                }
+            }
+        }
 
 
 class FallbackInstructorClient:

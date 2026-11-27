@@ -23,8 +23,10 @@ class ModelProvider(ABC):
         max_tokens: int | None = None,
         request_timeout_seconds: float | None = None,
         http_max_retries: int | None = None,
+        structured_output: str | None = None,
     ):
         self.model = model
+        self.structured_output = structured_output
         self.max_tokens = max_tokens
         self.request_timeout_seconds = request_timeout_seconds
         self.http_max_retries = http_max_retries
@@ -47,6 +49,7 @@ class ModelProvider(ABC):
             max_tokens=self.max_tokens,
             request_timeout_seconds=self.request_timeout_seconds,
             http_max_retries=self.http_max_retries,
+            structured_output=self.structured_output,
         )
 
 

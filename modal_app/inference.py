@@ -39,6 +39,7 @@ mirror is the same weights, ungated.
 """
 
 import subprocess
+from pathlib import Path
 
 import modal
 
@@ -128,12 +129,52 @@ vllm_image = (
     )
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
     .run_function(_download_weights, secrets=[hf_secret])
+    # Last, so editing the middleware does not rebuild the 6.5GB weights layer.
+    .add_local_file(Path(__file__).parent / "vllm_auth.py", "/root/vllm_auth.py")
 )
 
 app = modal.App("cv-guestimator")
 
+MINUTES = 60
 
-@app.function(
+
+def _auth_headers() -> dict[str, str]:
+    import os
+
+    return {"Authorization": f"Bearer {os.environ['VLLM_API_KEY']}"}
+
+
+def _wait_ready(proc: subprocess.Popen) -> None:
+    """Block until vLLM answers /health, or raise if the process died."""
+    import time
+    import urllib.request
+
+    while True:
+        if proc.poll() is not None:
+            raise RuntimeError(f"vLLM exited with code {proc.returncode} during start-up")
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{VLLM_PORT}/health", timeout=2):
+                return
+        except Exception:
+            time.sleep(1)
+
+
+def _post(path: str, payload: dict | None = None, timeout: float = 300) -> None:
+    import json
+    import urllib.request
+
+    data = json.dumps(payload).encode() if payload is not None else b""
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{VLLM_PORT}{path}",
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/json", **_auth_headers()},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        response.read()
+
+
+@app.cls(
     image=vllm_image,
     # A 3B in bf16 is ~6.4GB of weights; an L4's 24GB fits it with room for the
     # KV cache at 8192 context. Anything larger is paying for idle VRAM.
@@ -144,108 +185,164 @@ app = modal.App("cv-guestimator")
     # The A10G is also 24GB and runs bf16, so the same flags fit unchanged; it
     # costs a little more per hour, paid only when the L4 pool is empty.
     gpu=["L4", "A10G"],
-    # How long a container lingers after its last request. The matching pipeline
-    # makes three sequential LLM calls per run, and a human comparing candidates
-    # makes several runs in a row, so this has to outlast the gap between runs
-    # or a session cold-starts in the middle of itself.
-    #
-    # Three minutes rather than ten because an idle GPU bills exactly like a
-    # busy one: at ~$0.76/hr for an L4, a ten-minute tail cost ~$0.13 every
-    # time the endpoint went quiet, which was a larger share of early spend
-    # than the actual inference. Three still spans the pause between runs in a
-    # working session while cutting the tail's cost by 70%. Raise it if you
-    # find yourself waiting on cold starts mid-session -- that is the signal
-    # this is too low, and it is worth more than the pennies saved.
-    #
+    # How long a container lingers after its last request. Three minutes spans
+    # the pause between runs in a working session; an idle GPU bills exactly
+    # like a busy one (~$0.76/hr for an L4), so longer is mostly waste.
     # `min_containers=1` removes cold starts entirely and pays for a GPU 24/7
     # (~$18/day). Only worth it for an endpoint serving real users.
-    scaledown_window=3 * 60,
-    timeout=20 * 60,
+    scaledown_window=3 * MINUTES,
+    timeout=20 * MINUTES,
     secrets=[hf_secret, api_key_secret],
+    # GPU MEMORY SNAPSHOTS. The slow part of a cold start was never the
+    # weights (they are baked into the image): it was vLLM's engine start,
+    # LoRA load and, without --enforce-eager, torch.compile plus CUDA graph
+    # capture. With snapshots, Modal runs `start()` below once per deploy,
+    # saves the container's CPU and GPU memory, and restores that image on
+    # every later cold start instead of booting vLLM again.
+    #
+    # The FIRST cold start after each `modal deploy` is slower than before,
+    # because it does the full boot and then takes the snapshot. Every one
+    # after that restores. GPU snapshots are an alpha Modal feature; if a
+    # restore ever fails, delete these two lines to go back to a plain boot.
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
 # One vLLM process batches concurrent requests far better than one-request-per-
 # container does, and the harness can fan out runs. Inputs beyond this queue
 # rather than cold-starting another GPU.
 @modal.concurrent(max_inputs=8)
-@modal.web_server(
-    port=VLLM_PORT,
-    # vLLM engine init + CUDA graph capture on a cold container, before it can
-    # answer /health. Generous on purpose: exceeding it fails the deploy.
-    startup_timeout=10 * 60,
-)
-def serve() -> None:
-    import os
+class VllmServer:
+    @modal.enter(snap=True)
+    def start(self) -> None:
+        """Boot vLLM, warm every code path, then put it to sleep for the snapshot."""
+        import os
 
-    subprocess.Popen(
-        [
-            "vllm",
-            "serve",
-            BASE_DIR,
-            "--served-model-name",
-            SERVED_BASE_NAME,
-            # No --tokenizer: the base's tokenizer is used, and for these two
-            # repos that is the same tokenizer, not a compromise.
-            #
-            # The adapter's own copy cannot be loaded here at all. Unsloth
-            # wrote it with a transformers/tokenizers far newer than vLLM
-            # 0.11.0 pins: its tokenizer_config.json names a `TokenizersBackend`
-            # class the installed library has never heard of, and past that,
-            # its tokenizer.json is a format the bundled `tokenizers` cannot
-            # read ("Cannot instantiate this tokenizer from a slow version").
-            # Both failures land during engine init, so the container never
-            # boots and requests just sit pending until the startup timeout.
-            #
-            # Serving the base's copy costs nothing here, which was checked
-            # rather than assumed: the adapter's chat_template.jinja is
-            # byte-identical to `unsloth/Llama-3.2-3B-Instruct`'s once CRLF is
-            # normalised to LF, and both declare the same
-            # `<|finetune_right_pad_id|>` pad token and `<|eot_id|>` eos token.
-            # There is no prompt-rendering difference to lose.
-            #
-            # Re-check that if ADAPTER_REPO ever changes. A future fine-tune
-            # that adds special tokens or edits the template WOULD need its own
-            # tokenizer, and would then need a vLLM new enough to read it.
-            "--enable-lora",
-            "--lora-modules",
-            f"{LORA_NAME}={ADAPTER_DIR}",
-            "--max-lora-rank",
-            str(MAX_LORA_RANK),
-            "--max-model-len",
-            str(MAX_MODEL_LEN),
-            # Skip torch.compile and CUDA graph capture at boot. Those cost 90s
-            # of compilation plus 67 shape captures on this model -- billed at
-            # GPU rates, on every cold start, and thrown away when the
-            # container scales down. They buy maybe 10-20% on generation
-            # throughput, which only pays for itself under sustained traffic.
-            #
-            # This endpoint's traffic is the opposite: occasional eval runs
-            # with long gaps, so nearly every session pays the compile and few
-            # amortise it. Eager mode trades that for a much shorter cold
-            # start.
-            #
-            # Remove this if the endpoint ever serves steady load, and re-time
-            # a cold start before deciding -- the compile cost is a property of
-            # the model and the vLLM version, not a constant.
-            "--enforce-eager",
-            # vLLM's own bearer-token auth, NOT Modal proxy auth. Modal's proxy
-            # tokens are sent as `Modal-Key`/`Modal-Secret` headers, which the
-            # OpenAI SDK inside InstructorClient will never send; vLLM's
-            # --api-key checks `Authorization: Bearer`, which is exactly what
-            # that SDK does send. So this drops straight into the existing
-            # `api_key_env:` mechanism in configs/llm.yaml with no new code.
-            "--api-key",
-            os.environ["VLLM_API_KEY"],
-            "--host",
-            "0.0.0.0",
-            "--port",
-            str(VLLM_PORT),
-        ]
-    )
-    # No wait/join: @modal.web_server polls the port and takes over once vLLM is
-    # listening. Stop tokens are not passed here because vLLM reads the base
-    # repo's generation_config.json, whose eos_token_id list already covers
-    # <|end_of_text|>, <|eom_id|> and <|eot_id|> -- three of the four stops that
-    # docker/ollama/Modelfile has to spell out by hand for Ollama.
+        env = {
+            **os.environ,
+            # Registers /sleep and /wake_up, which the snapshot flow needs.
+            # Dev mode also exposes other admin routes, which is why the
+            # RequireApiKey middleware below guards every path, not just /v1.
+            "VLLM_SERVER_DEV_MODE": "1",
+            # Modal's guidance for snapshotting code that uses torch.compile.
+            "TORCHINDUCTOR_COMPILE_THREADS": "1",
+            # So `--middleware vllm_auth.RequireApiKey` can import the module
+            # copied to /root/vllm_auth.py by the image definition above.
+            "PYTHONPATH": "/root",
+        }
+        self.vllm_proc = subprocess.Popen(
+            [
+                "vllm",
+                "serve",
+                BASE_DIR,
+                "--served-model-name",
+                SERVED_BASE_NAME,
+                # No --tokenizer: the base's tokenizer is used, and for these
+                # two repos that is the same tokenizer, not a compromise.
+                #
+                # The adapter's own copy cannot be loaded here at all. Unsloth
+                # wrote it with a transformers/tokenizers far newer than vLLM
+                # 0.11.0 pins: its tokenizer_config.json names a
+                # `TokenizersBackend` class the installed library has never
+                # heard of, and its tokenizer.json is a format the bundled
+                # `tokenizers` cannot read. Both failures land during engine
+                # init, so the container never boots.
+                #
+                # Serving the base's copy costs nothing here, which was checked
+                # rather than assumed: the adapter's chat_template.jinja is
+                # byte-identical to `unsloth/Llama-3.2-3B-Instruct`'s once CRLF
+                # is normalised to LF, and both declare the same pad and eos
+                # tokens. Re-check that if ADAPTER_REPO ever changes.
+                "--enable-lora",
+                "--lora-modules",
+                f"{LORA_NAME}={ADAPTER_DIR}",
+                "--max-lora-rank",
+                str(MAX_LORA_RANK),
+                "--max-model-len",
+                str(MAX_MODEL_LEN),
+                # No --enforce-eager any more. Eager mode skipped torch.compile
+                # and CUDA graph capture (~90s) because every cold start paid
+                # for them again. With a memory snapshot that work happens once
+                # per deploy and is restored from the snapshot, so generation
+                # gets the faster compiled path for free.
+                #
+                # Structured outputs: the app asks for a JSON schema per call
+                # (configs/llm.yaml `structured_output: json_schema`), and
+                # xgrammar constrains decoding to it. Forbidding free whitespace
+                # stops the pretty-printing tokens a JSON reply otherwise
+                # spends, and removes the newline loops a small model can fall
+                # into inside an otherwise valid JSON object.
+                "--structured-outputs-config",
+                '{"backend": "xgrammar", "disable_any_whitespace": true}',
+                # Required for /sleep and /wake_up.
+                "--enable-sleep-mode",
+                # Puts /sleep, /wake_up and the other dev-mode routes behind
+                # the same bearer key as /v1. See modal_app/vllm_auth.py.
+                "--middleware",
+                "vllm_auth.RequireApiKey",
+                # vLLM's own bearer-token auth for /v1, NOT Modal proxy auth.
+                # Modal's proxy tokens are sent as `Modal-Key`/`Modal-Secret`
+                # headers, which the OpenAI SDK inside InstructorClient never
+                # sends; vLLM's --api-key checks `Authorization: Bearer`, which
+                # is exactly what that SDK does send.
+                "--api-key",
+                os.environ["VLLM_API_KEY"],
+                "--host",
+                "0.0.0.0",
+                "--port",
+                str(VLLM_PORT),
+            ],
+            env=env,
+        )
+        _wait_ready(self.vllm_proc)
+
+        # Exercise the LoRA and the JSON-schema path a few times so the
+        # compiled kernels, CUDA graphs and grammar compiler are all warm in
+        # the snapshot, not built on a visitor's first request.
+        for _ in range(3):
+            _post(
+                "/v1/chat/completions",
+                {
+                    "model": LORA_NAME,
+                    "messages": [{"role": "user", "content": "Reply with JSON."}],
+                    "max_tokens": 16,
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "warmup",
+                            "schema": {
+                                "type": "object",
+                                "properties": {"ok": {"type": "boolean"}},
+                                "required": ["ok"],
+                            },
+                        },
+                    },
+                },
+            )
+
+        # Level 1 moves the weights to CPU memory and drops the KV cache, so
+        # the snapshot is small and the cache is rebuilt fresh on restore.
+        _post("/sleep?level=1")
+
+    @modal.enter(snap=False)
+    def wake(self) -> None:
+        """Runs after every restore: bring the weights back onto the GPU."""
+        _post("/wake_up")
+        _wait_ready(self.vllm_proc)
+
+    # `label` keeps the public URL exactly what it was when `serve` was a plain
+    # function (https://<workspace>--cv-guestimator-serve.modal.run), so the
+    # MODAL_INFERENCE_URL secret on Cloud Run does not need to change.
+    @modal.web_server(port=VLLM_PORT, startup_timeout=10 * MINUTES, label="cv-guestimator-serve")
+    def serve(self) -> None:
+        # No body: vLLM is already listening, started in `start()` above.
+        # Stop tokens are not passed because vLLM reads the base repo's
+        # generation_config.json, whose eos_token_id list already covers
+        # <|end_of_text|>, <|eom_id|> and <|eot_id|>.
+        pass
+
+    @modal.exit()
+    def stop(self) -> None:
+        self.vllm_proc.terminate()
 
 
 @app.local_entrypoint()
@@ -270,7 +367,7 @@ def smoke_test() -> None:
             "cv-guestimator-api-key Modal secret before running the smoke test."
         )
 
-    url = serve.get_web_url().rstrip("/") + "/v1/chat/completions"
+    url = VllmServer().serve.get_web_url().rstrip("/") + "/v1/chat/completions"
     payload = json.dumps(
         {
             "model": LORA_NAME,
