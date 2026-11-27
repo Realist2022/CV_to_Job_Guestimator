@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class WorkRole(BaseModel):
@@ -31,6 +31,20 @@ class OverallExperienceOutput(BaseModel):
     candidate_roles: list[WorkRole] = Field(
         description="Professional roles supported by the candidate CV."
     )
+
+    @field_validator("target_overall_years")
+    @classmethod
+    def _zero_years_means_unspecified(cls, value: Optional[float]) -> Optional[float]:
+        """Read a 0-year requirement as "no requirement stated".
+
+        No listing asks for "at least 0 years", so a 0 here is a model saying
+        "none given" in the wrong way. Seen on 2026-11-27: the fine-tuned model
+        returned 0 instead of null for a listing with no experience bar. The
+        scorer floors the target at 0.1 years, so 0.2 years of relevant work
+        scored a perfect 100 on experience, and the portfolio showed
+        "0 yrs wanted". Normalising here fixes both the score and the display.
+        """
+        return None if value == 0 else value
 
 
 class OverallExperienceResponse(BaseModel):

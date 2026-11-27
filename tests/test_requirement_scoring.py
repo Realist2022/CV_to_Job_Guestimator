@@ -106,6 +106,25 @@ class RequirementScoringTest(unittest.TestCase):
         self.assertEqual(scorecard.pillar_b.score, 12.5)
         self.assertEqual(scorecard.final_relevance, 65.0)
 
+    def test_zero_year_requirement_is_treated_as_unspecified(self):
+        overall_experience = OverallExperienceOutput(
+            target_job_title="AI Engineer",
+            target_overall_years=0,
+            candidate_roles=[],
+        )
+        self.assertIsNone(overall_experience.target_overall_years)
+
+        scorecard = RelevanceScoringEngine().calculate_scorecard(
+            SkillMatchResult(
+                job_requirements=[JobRequirement(skill_name="Python")],
+                matched_cv_skills=["Python"],
+                missing_cv_skills=[],
+                rationale="All capabilities are present.",
+            ),
+            overall_experience,
+        )
+        self.assertFalse(scorecard.pillar_b.applicable)
+
     def test_missing_overall_experience_requirement_is_not_applicable(self):
         skills_result = SkillMatchResult(
             job_requirements=[JobRequirement(skill_name="Python")],
